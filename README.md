@@ -22,11 +22,7 @@ VS Code 에서 이 저장소를 열고 Claude Code 에게 `INSTALL.md 대로 설
 
 직접 하려면 아래 순서를 따른다.
 
-1. 저장소를 받아 원하는 위치에 둔다.
-
-   ```bash
-   git clone https://github.com/yoonsimon/claudewidget.git
-   ```
+1. 이 폴더를 옮기지 않을 자리에 둔다. 설치 후 경로가 설정에 저장되므로 나중에 옮기면 훅이 끊어진다.
 
 2. Pillow 를 설치한다.
 
