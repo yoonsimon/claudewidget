@@ -12,6 +12,7 @@ from tkinter import filedialog
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageSequence, ImageTk
 
 import markdown
+import win_layered
 from usage import fetch_usage
 
 BASE = Path(__file__).resolve().parent
@@ -140,20 +141,62 @@ def make_transparent(win):
         win.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
 
 
-def to_photo(im):
-    """RGBA to a PhotoImage the current platform can show without a fringe.
+def key_out(im):
+    """Fallback for Windows without layered windows: alpha becomes all or nothing.
 
-    macOS composites the alpha itself. Windows cannot, so every half-transparent
-    pixel is forced to fully opaque or fully keyed: left as-is it would blend with
-    the key colour and ring the artwork in magenta.
+    A half-transparent pixel left in place would blend with the key colour and ring
+    the artwork in magenta, so the soft edge is thresholded away instead.
     """
-    if IS_MAC:
-        return ImageTk.PhotoImage(im), im.size
-
     alpha = im.getchannel("A").point(lambda v: 255 if v >= 128 else 0)
     flat = Image.new("RGB", im.size, MAGENTA_RGB)
     flat.paste(im.convert("RGB"), mask=alpha)
-    return ImageTk.PhotoImage(flat), im.size
+    return flat
+
+
+class Canvas:
+    """A borderless window that shows one RGBA image.
+
+    On Windows the image goes straight to the compositor as a layered surface, so
+    antialiased edges survive. Everywhere else it is a Label holding a PhotoImage.
+    """
+
+    use_layered = win_layered.SUPPORTED
+
+    def __init__(self, win):
+        self.win = win
+        self.image = None
+        self._photo = None
+        self.label = tk.Label(win, bg=TRANSPARENT_KEY, bd=0)
+        self.label.pack()
+        # Windows treats the colour key and a layered surface as mutually exclusive:
+        # once -transparentcolor is set, UpdateLayeredWindow refuses to draw. So the
+        # key is only applied when the layered path is not in play.
+        if not Canvas.use_layered:
+            make_transparent(win)
+
+    @property
+    def size(self):
+        return self.image.size if self.image else (0, 0)
+
+    def show(self, image, x, y):
+        self.image = image
+        w, h = image.size
+        if Canvas.use_layered:
+            self.win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
+            # The surface only sticks once the window actually exists, so flush any
+            # pending map/resize before handing the bitmap over.
+            self.win.update_idletasks()
+            if win_layered.paint(self.win, image, x, y):
+                return
+            # One failure means this machine cannot do it; fall back for good.
+            Canvas.use_layered = False
+            make_transparent(self.win)
+            for sibling in self.win.winfo_toplevel().winfo_children():
+                if isinstance(sibling, tk.Toplevel):
+                    make_transparent(sibling)
+        self._photo = ImageTk.PhotoImage(key_out(image))
+        self.label.configure(image=self._photo)
+        self.win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
 
 
 def placeholder_image(size):
@@ -195,11 +238,11 @@ def prepare_frame(frame, max_size):
     return out
 
 
-def flatten_for_transparency(im):
-    """Downscale a supersampled RGBA card into a PhotoImage.
+def downscale(im):
+    """Shrink a supersampled RGBA card to its final size.
 
     The transparent area is pre-filled with the card colour first so antialiased
-    edges never blend toward black when the card shrinks.
+    edges never blend toward black on the way down.
     """
     alpha = im.getchannel("A")
     rgb = Image.new("RGB", im.size, BUBBLE_FILL)
@@ -207,8 +250,7 @@ def flatten_for_transparency(im):
     size = (im.width // SS, im.height // SS)
     rgb = rgb.resize(size, Image.LANCZOS)
     alpha = alpha.resize(size, Image.LANCZOS)
-
-    return to_photo(Image.merge("RGBA", (*rgb.split(), alpha)))
+    return Image.merge("RGBA", (*rgb.split(), alpha))
 
 
 def run_font(style, text, heading=False):
@@ -384,11 +426,9 @@ class SpeechBubble:
         self.win = tk.Toplevel(master)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        make_transparent(self.win)
-        self.label = tk.Label(self.win, bg=TRANSPARENT_KEY, bd=0)
-        self.label.pack()
+        self.canvas = Canvas(self.win)
         self.win.withdraw()
-        self._photo = None
+        self.image = None
         self._signature = None
         self.width = 0
         self.height = 0
@@ -436,14 +476,13 @@ class SpeechBubble:
             ty += head_h
         draw_markdown(d, body, tx, ty, text_w)
 
-        self._photo, size = flatten_for_transparency(im)
-        self.label.configure(image=self._photo)
-        self.width, self.height = size
+        self.image = downscale(im)
+        self.width, self.height = self.image.size
         self.tail_dx = tip_x // SS
 
     def place(self, x, y):
-        self.win.geometry(f"{self.width}x{self.height}+{int(x)}+{int(y)}")
         self.win.deiconify()
+        self.canvas.show(self.image, x, y)
 
     def hide(self):
         self.win.withdraw()
@@ -502,11 +541,9 @@ class UsagePanel:
         self.win = tk.Toplevel(master)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        make_transparent(self.win)
-        self.label = tk.Label(self.win, bg=TRANSPARENT_KEY, bd=0)
-        self.label.pack()
+        self.canvas = Canvas(self.win)
         self.win.withdraw()
-        self._photo = None
+        self.image = None
         self.data = {"loading": True}
         self.open = False
         self._refresh_job = None
@@ -578,9 +615,8 @@ class UsagePanel:
                     d.text((x, y), row["reset"], font=font_label, fill=(150, 150, 158))
                 y += line_h
 
-        self._photo, size = flatten_for_transparency(im)
-        self.label.configure(image=self._photo)
-        return size
+        self.image = downscale(im)
+        return self.image.size
 
     def place_under(self, char_x, char_y, char_w, char_h):
         w, h = self.render()
@@ -590,7 +626,7 @@ class UsagePanel:
         bottom = self.master.winfo_vrooty() + self.master.winfo_vrootheight()
         if y + h > bottom:
             y = bottom - h
-        self.win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
+        self.canvas.show(self.image, x, y)
 
     def show(self):
         self.open = True
@@ -630,10 +666,8 @@ class Widget:
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", bool(self.config.get("always_on_top", True)))
-        make_transparent(self.root)
-
-        self.img_label = tk.Label(self.root, bg=TRANSPARENT_KEY, bd=0)
-        self.img_label.pack()
+        self.canvas = Canvas(self.root)
+        self.img_label = self.canvas.label
 
         self.bubbles = BubbleStack(self.root)
         self.panel = UsagePanel(self.root)
@@ -641,6 +675,9 @@ class Widget:
         self.load_image(self.config.get("image_path", ""))
         self.bind_events()
         self.position_window()
+        # A still image is painted once, so make sure that one paint lands after the
+        # window is on screen rather than before it exists.
+        self.root.after(60, self.paint_character)
         self.poll_state()
         self.animate()
 
@@ -652,11 +689,9 @@ class Widget:
                 break
         else:
             f = prepare_frame(placeholder_image(max_size), max_size)
-            photo, size = to_photo(f)
-            self.frames = [(photo, 1000)]
-            self.img_size = size
+            self.frames = [(f, 1000)]
+            self.img_size = f.size
         self.frame_index = 0
-        self.img_label.configure(image=self.frames[0][0])
 
     def load_frames(self, path, max_size):
         self.frames = []
@@ -665,22 +700,23 @@ class Widget:
             iterator = ImageSequence.Iterator(im) if getattr(im, "is_animated", False) else [im]
             for frame in iterator:
                 f = prepare_frame(frame, max_size)
-                photo, size = to_photo(f)
                 duration = frame.info.get("duration", 120) or 120
-                self.frames.append((photo, duration))
-                self.img_size = size
+                self.frames.append((f, duration))
+                self.img_size = f.size
         except Exception:
             self.frames = []
         return bool(self.frames)
 
     def animate(self):
+        delay = 250
         if len(self.frames) > 1:
             self.frame_index = (self.frame_index + 1) % len(self.frames)
-            img, delay = self.frames[self.frame_index]
-            self.img_label.configure(image=img)
-            self.root.after(max(int(delay), 30), self.animate)
-        else:
-            self.root.after(250, self.animate)
+            delay = max(int(self.frames[self.frame_index][1]), 30)
+            self.paint_character()
+        self.root.after(delay, self.animate)
+
+    def paint_character(self):
+        self.canvas.show(self.frames[self.frame_index][0], self.root.winfo_x(), self.root.winfo_y())
 
     def position_window(self):
         w, h = self.img_size
@@ -689,16 +725,18 @@ class Widget:
         if x is None or y is None:
             x = self.root.winfo_screenwidth() - w - 40
             y = self.root.winfo_screenheight() - h - 80
-        self.root.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
+        self.canvas.show(self.frames[self.frame_index][0], x, y)
 
     def bind_events(self):
-        self.img_label.bind("<ButtonPress-1>", self.start_move)
-        self.img_label.bind("<B1-Motion>", self.do_move)
-        self.img_label.bind("<ButtonRelease-1>", self.end_move)
+        # Bound on the window, not the label: a layered window paints its own surface,
+        # so the label stays empty and would only cover a pixel or two.
+        self.root.bind("<ButtonPress-1>", self.start_move)
+        self.root.bind("<B1-Motion>", self.do_move)
+        self.root.bind("<ButtonRelease-1>", self.end_move)
         # Right-click is Button-3 on Windows but Button-2 on macOS Tk, and a
         # trackpad-only Mac needs the control-click alias too.
         for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
-            self.img_label.bind(sequence, self.show_menu)
+            self.root.bind(sequence, self.show_menu)
 
     def start_move(self, event):
         self._drag_origin = (event.x, event.y)
@@ -709,7 +747,11 @@ class Widget:
         dy = event.y - self._drag_origin[1]
         if abs(dx) > 3 or abs(dy) > 3:
             self._dragged = True
-        self.root.geometry(f"+{self.root.winfo_x() + dx}+{self.root.winfo_y() + dy}")
+        self.canvas.show(
+            self.frames[self.frame_index][0],
+            self.root.winfo_x() + dx,
+            self.root.winfo_y() + dy,
+        )
         self.place_bubbles()
         if self.panel.open:
             self.place_panel()
