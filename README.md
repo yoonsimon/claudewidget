@@ -19,7 +19,7 @@ Claude Code 세션 상태를 데스크톱 캐릭터로 보여주는 윈도우용
 1. 저장소를 받아 원하는 위치에 둔다.
 
    ```bash
-   git clone https://github.com/yoonsimon/claude-widget.git
+   git clone https://github.com/yoonsimon/claudewidget.git
    ```
 
 2. Pillow 를 설치한다.
