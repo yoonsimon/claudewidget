@@ -16,6 +16,9 @@ Claude Code 세션 상태를 데스크톱 캐릭터로 보여주는 윈도우용
 
 ## 설치
 
+VS Code 에서 이 저장소를 열고 Claude Code 에게 `INSTALL.md 대로 설치해줘` 라고 하면
+파이썬 확인부터 훅 등록까지 알아서 처리한다. 직접 하려면 아래 순서를 따른다.
+
 1. 저장소를 받아 원하는 위치에 둔다.
 
    ```bash
@@ -35,16 +38,16 @@ Claude Code 세션 상태를 데스크톱 캐릭터로 보여주는 윈도우용
    {
      "hooks": {
        "PreToolUse": [
-         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook_bridge.py\"" }] }
+         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook.py\"" }] }
        ],
        "PostToolUse": [
-         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook_bridge.py\"" }] }
+         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook.py\"" }] }
        ],
        "Notification": [
-         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook_bridge.py\"" }] }
+         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook.py\"" }] }
        ],
        "Stop": [
-         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook_bridge.py\"" }] }
+         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook.py\"" }] }
        ]
      }
    }
@@ -95,7 +98,8 @@ Claude Code 세션 상태를 데스크톱 캐릭터로 보여주는 윈도우용
 | 파일 | 역할 |
 |---|---|
 | `widget.py` | 캐릭터 창, 말풍선, 사용량 패널 (실행 진입점) |
-| `hook_bridge.py` | Claude Code 훅이 호출하는 진입점. 상태를 기록하고 위젯을 띄운다 |
+| `hook.py` | 훅이 실제로 실행하는 래퍼. 대상이 깨져도 항상 0으로 끝난다 |
+| `hook_bridge.py` | 상태를 기록하고 위젯을 띄운다 |
 | `usage.py` | 사용량 조회 |
 | `markdown.py` | 말풍선용 마크다운 파서 |
 | `assets/default.png` | 기본 캐릭터 |
