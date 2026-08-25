@@ -33,7 +33,11 @@ STALE_AFTER = 30 * 60  # a session quiet this long stops being shown
 
 SIZE_PRESETS = [("작게", 96), ("보통", 128), ("크게", 180), ("아주 크게", 240)]
 
-TRANSPARENT_KEY = "magenta"
+IS_MAC = sys.platform == "darwin"
+
+# macOS Tk gives a window real per-pixel alpha; Windows Tk can only knock out one
+# flat colour, so there the image has to be keyed against magenta instead.
+TRANSPARENT_KEY = "systemTransparent" if IS_MAC else "magenta"
 MAGENTA_RGB = (255, 0, 255)
 
 BUBBLE_FILL = (255, 255, 255)
@@ -46,9 +50,14 @@ BUBBLE_CODE_BG = (244, 244, 247)
 BUBBLE_RULE = (226, 226, 232)
 BUBBLE_MAX_TEXT_W = 300
 
-FONT_REGULAR = ("malgun.ttf", "NanumGothic.ttf", "arial.ttf")
-FONT_BOLD = ("malgunbd.ttf", "NanumGothicBold.ttf", "arialbd.ttf")
-FONT_MONO = ("consola.ttf", "cour.ttf")
+if IS_MAC:
+    FONT_REGULAR = ("AppleSDGothicNeo.ttc", "AppleGothic.ttf", "Helvetica.ttc")
+    FONT_BOLD = ("AppleSDGothicNeoB.otf", "AppleSDGothicNeo.ttc", "AppleGothic.ttf")
+    FONT_MONO = ("Menlo.ttc", "Courier.ttc")
+else:
+    FONT_REGULAR = ("malgun.ttf", "NanumGothic.ttf", "arial.ttf")
+    FONT_BOLD = ("malgunbd.ttf", "NanumGothicBold.ttf", "arialbd.ttf")
+    FONT_MONO = ("consola.ttf", "cour.ttf")
 
 LINE_GAP = 5
 BLOCK_GAP = 8
@@ -122,6 +131,31 @@ def load_font(candidates, size):
     return ImageFont.load_default()
 
 
+def make_transparent(win):
+    """Give a window a see-through background on either platform."""
+    win.configure(bg=TRANSPARENT_KEY)
+    if IS_MAC:
+        win.wm_attributes("-transparent", True)
+    else:
+        win.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
+
+
+def to_photo(im):
+    """RGBA to a PhotoImage the current platform can show without a fringe.
+
+    macOS composites the alpha itself. Windows cannot, so every half-transparent
+    pixel is forced to fully opaque or fully keyed: left as-is it would blend with
+    the key colour and ring the artwork in magenta.
+    """
+    if IS_MAC:
+        return ImageTk.PhotoImage(im), im.size
+
+    alpha = im.getchannel("A").point(lambda v: 255 if v >= 128 else 0)
+    flat = Image.new("RGB", im.size, MAGENTA_RGB)
+    flat.paste(im.convert("RGB"), mask=alpha)
+    return ImageTk.PhotoImage(flat), im.size
+
+
 def placeholder_image(size):
     im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
@@ -145,41 +179,36 @@ def bleed_rgb(im):
 
 
 def prepare_frame(frame, max_size):
-    """Fit a frame into the box and key it against the transparency colour.
-
-    tkinter can only key one flat colour, not per-pixel alpha, so the alpha is
-    hard-thresholded: a half-transparent pixel left in place would show up as a
-    magenta fringe around the character.
-    """
+    """Fit a frame into the box, ready for the platform's transparency scheme."""
     im = frame.convert("RGBA")
     ratio = min(max_size / im.width, max_size / im.height, 1.0)
     size = (max(1, round(im.width * ratio)), max(1, round(im.height * ratio)))
 
-    rgb = bleed_rgb(im).resize(size, Image.LANCZOS)
-    alpha = im.getchannel("A").resize(size, Image.LANCZOS).point(lambda v: 255 if v >= 128 else 0)
+    if IS_MAC:
+        return im.resize(size, Image.LANCZOS)
 
-    flat = Image.new("RGB", size, MAGENTA_RGB)
-    flat.paste(rgb, mask=alpha)
-    return flat
+    # Bleeding the colour outward first stops the resize from dragging the black
+    # that straight-alpha PNGs keep in their transparent pixels into the rim.
+    rgb = bleed_rgb(im).resize(size, Image.LANCZOS)
+    alpha = im.getchannel("A").resize(size, Image.LANCZOS)
+    out = Image.merge("RGBA", (*rgb.split(), alpha))
+    return out
 
 
 def flatten_for_transparency(im):
-    """Downscale a supersampled RGBA card and key it against the transparent colour.
+    """Downscale a supersampled RGBA card into a PhotoImage.
 
-    The transparent area is pre-filled with the card colour so antialiased edges never
-    blend toward black, and the alpha is hard-thresholded so no half-transparent pixel
-    can pick up the magenta key as a coloured fringe.
+    The transparent area is pre-filled with the card colour first so antialiased
+    edges never blend toward black when the card shrinks.
     """
     alpha = im.getchannel("A")
     rgb = Image.new("RGB", im.size, BUBBLE_FILL)
     rgb.paste(im.convert("RGB"), mask=alpha)
     size = (im.width // SS, im.height // SS)
     rgb = rgb.resize(size, Image.LANCZOS)
-    alpha = alpha.resize(size, Image.LANCZOS).point(lambda v: 255 if v >= 128 else 0)
+    alpha = alpha.resize(size, Image.LANCZOS)
 
-    flat = Image.new("RGB", size, MAGENTA_RGB)
-    flat.paste(rgb, mask=alpha)
-    return ImageTk.PhotoImage(flat), size
+    return to_photo(Image.merge("RGBA", (*rgb.split(), alpha)))
 
 
 def run_font(style, text, heading=False):
@@ -355,8 +384,7 @@ class SpeechBubble:
         self.win = tk.Toplevel(master)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        self.win.configure(bg=TRANSPARENT_KEY)
-        self.win.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
+        make_transparent(self.win)
         self.label = tk.Label(self.win, bg=TRANSPARENT_KEY, bd=0)
         self.label.pack()
         self.win.withdraw()
@@ -474,8 +502,7 @@ class UsagePanel:
         self.win = tk.Toplevel(master)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        self.win.configure(bg=TRANSPARENT_KEY)
-        self.win.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
+        make_transparent(self.win)
         self.label = tk.Label(self.win, bg=TRANSPARENT_KEY, bd=0)
         self.label.pack()
         self.win.withdraw()
@@ -603,8 +630,7 @@ class Widget:
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", bool(self.config.get("always_on_top", True)))
-        self.root.configure(bg=TRANSPARENT_KEY)
-        self.root.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
+        make_transparent(self.root)
 
         self.img_label = tk.Label(self.root, bg=TRANSPARENT_KEY, bd=0)
         self.img_label.pack()
@@ -626,8 +652,9 @@ class Widget:
                 break
         else:
             f = prepare_frame(placeholder_image(max_size), max_size)
-            self.frames = [(ImageTk.PhotoImage(f), 1000)]
-            self.img_size = f.size
+            photo, size = to_photo(f)
+            self.frames = [(photo, 1000)]
+            self.img_size = size
         self.frame_index = 0
         self.img_label.configure(image=self.frames[0][0])
 
@@ -638,9 +665,10 @@ class Widget:
             iterator = ImageSequence.Iterator(im) if getattr(im, "is_animated", False) else [im]
             for frame in iterator:
                 f = prepare_frame(frame, max_size)
+                photo, size = to_photo(f)
                 duration = frame.info.get("duration", 120) or 120
-                self.frames.append((ImageTk.PhotoImage(f), duration))
-                self.img_size = f.size
+                self.frames.append((photo, duration))
+                self.img_size = size
         except Exception:
             self.frames = []
         return bool(self.frames)
@@ -667,7 +695,10 @@ class Widget:
         self.img_label.bind("<ButtonPress-1>", self.start_move)
         self.img_label.bind("<B1-Motion>", self.do_move)
         self.img_label.bind("<ButtonRelease-1>", self.end_move)
-        self.img_label.bind("<Button-3>", self.show_menu)
+        # Right-click is Button-3 on Windows but Button-2 on macOS Tk, and a
+        # trackpad-only Mac needs the control-click alias too.
+        for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            self.img_label.bind(sequence, self.show_menu)
 
     def start_move(self, event):
         self._drag_origin = (event.x, event.y)

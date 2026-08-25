@@ -19,11 +19,14 @@ MAX_SNIPPET = 260
 MAX_LINES = 8
 
 
-def pythonw_executable():
-    """Prefer pythonw.exe so launching the widget never flashes a console window."""
+def gui_executable():
+    """Interpreter that starts the widget without flashing a console window."""
     current = Path(sys.executable)
-    candidate = current.with_name("pythonw.exe")
-    return str(candidate if candidate.exists() else current)
+    for name in ("pythonw.exe", "pythonw"):
+        candidate = current.with_name(name)
+        if candidate.exists():
+            return str(candidate)
+    return str(current)
 
 
 PROJECT_MARKERS = (".git", ".claude", "CLAUDE.md")
@@ -123,11 +126,15 @@ def trim_snippet(text):
 
 
 def ensure_widget_running():
+    # The widget must outlive this hook process, and the detach flags for that are
+    # named differently on each platform.
+    options = {}
+    if sys.platform == "win32":
+        options["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+    else:
+        options["start_new_session"] = True
     try:
-        subprocess.Popen(
-            [pythonw_executable(), str(WIDGET_PATH)],
-            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
-        )
+        subprocess.Popen([gui_executable(), str(WIDGET_PATH)], **options)
     except Exception:
         pass
 
