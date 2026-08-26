@@ -45,6 +45,7 @@ class Canvas:
     def __init__(self, win):
         self.win = win
         self.image = None
+        self.x = self.y = 0
         self._photo = None
         self.label = tk.Label(win, bg=TRANSPARENT_KEY, bd=0)
         self.label.pack()
@@ -73,6 +74,9 @@ class Canvas:
 
     def show(self, image, x, y):
         self.image = image
+        # Tracked here because Tk's idea of the position can go stale after a
+        # display change; whoever needs the live position asks the canvas.
+        self.x, self.y = int(x), int(y)
         w, h = image.size
         if Canvas.use_layered:
             self.win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")

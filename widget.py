@@ -64,6 +64,8 @@ class Widget:
         self.load_image(self.config.get("image_path", ""))
         self.build_menu()
         self.bind_events()
+        self._displays = win_layered.virtual_screen()
+        self._displays_settle = 0
         self.position_window()
         # A still image is painted once, so make sure that one paint lands after the
         # window is on screen rather than before it exists.
@@ -106,10 +108,22 @@ class Widget:
         self.root.after(delay, self.animate)
 
     def paint_character(self):
-        self.canvas.show(self.frames[self.frame_index][0], self.root.winfo_x(), self.root.winfo_y())
+        x, y = self.current_pos()
+        self.canvas.show(self.frames[self.frame_index][0], x, y)
+
+    def current_pos(self):
+        # The canvas remembers where it last painted. Tk's winfo answers go stale
+        # after a monitor is plugged or pulled (Tk reads the layout once at start),
+        # which is how a drag could compute from a position the window was not at.
+        return self.canvas.x, self.canvas.y
 
     def default_position(self):
         w, h = self.img_size
+        # Live primary-monitor work area, not Tk's cached screen size.
+        area = win_layered.work_area(0, 0)
+        if area:
+            left, top, right, bottom = area
+            return right - w - 40, bottom - h - 50
         return self.root.winfo_screenwidth() - w - 40, self.root.winfo_screenheight() - h - 80
 
     def position_window(self):
@@ -152,11 +166,8 @@ class Widget:
         dy = event.y - self._drag_origin[1]
         if abs(dx) > 3 or abs(dy) > 3:
             self._dragged = True
-        self.canvas.show(
-            self.frames[self.frame_index][0],
-            self.root.winfo_x() + dx,
-            self.root.winfo_y() + dy,
-        )
+        x, y = self.current_pos()
+        self.canvas.show(self.frames[self.frame_index][0], x + dx, y + dy)
         self.place_bubbles()
         if self.panel.open:
             self.place_panel()
@@ -165,14 +176,13 @@ class Widget:
         if not self._dragged:
             self.toggle_panel()
             return
-        self.config["x"] = self.root.winfo_x()
-        self.config["y"] = self.root.winfo_y()
+        self.config["x"], self.config["y"] = self.current_pos()
         save_json(CONFIG_PATH, self.config)
 
     def place_panel(self):
-        self.panel.place_under(
-            self.root.winfo_x(), self.root.winfo_y(), self.root.winfo_width(), self.root.winfo_height()
-        )
+        x, y = self.current_pos()
+        w, h = self.img_size
+        self.panel.place_under(x, y, w, h)
 
     def toggle_panel(self):
         if self.panel.open:
@@ -285,8 +295,36 @@ class Widget:
         save_json(CONFIG_PATH, self.config)
 
     def poll_state(self):
+        self.watch_displays()
         self.refresh_bubbles()
         self.root.after(POLL_MS, self.poll_state)
+
+    def watch_displays(self):
+        """Recover when monitors are plugged in or pulled while the widget runs.
+
+        Startup validation cannot help a live process, and Tk never refreshes its
+        screen layout, so this samples the virtual screen every poll (a handful of
+        GetSystemMetrics calls) and re-validates the position once the layout has
+        held still for two ticks: display changes arrive as a burst, and moving
+        during the burst would judge against a half-applied layout."""
+        signature = win_layered.virtual_screen()
+        if signature is None or signature == getattr(self, "_displays", None):
+            self._displays_settle = 0
+            return
+        self._displays_settle = getattr(self, "_displays_settle", 0) + 1
+        if self._displays_settle < 2:
+            return  # first tick with the new layout: let it settle
+        self._displays = signature
+        self._displays_settle = 0
+
+        x, y = self.current_pos()
+        w, h = self.img_size
+        if not win_layered.on_any_monitor(x, y, w, h):
+            x, y = self.default_position()
+        self.canvas.show(self.frames[self.frame_index][0], x, y)
+        self.place_bubbles()
+        if self.panel.open:
+            self.place_panel()
 
     def refresh_bubbles(self):
         entries = []
@@ -307,8 +345,9 @@ class Widget:
         self.place_bubbles()
 
     def place_bubbles(self):
-        tip_x = self.root.winfo_x() + self.root.winfo_width() - 20
-        tip_y = self.root.winfo_y() + 4
+        x, y = self.current_pos()
+        tip_x = x + self.img_size[0] - 20
+        tip_y = y + 4
         self.bubbles.update(self._bubble_payload, tip_x, tip_y, on_click=self.dismiss_bubble)
 
     def dismiss_bubble(self, folder):

@@ -109,6 +109,8 @@ if SUPPORTED:
     user32.MonitorFromPoint.restype = wintypes.HMONITOR
     user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
     user32.GetMonitorInfoW.restype = wintypes.BOOL
+    user32.GetSystemMetrics.argtypes = [wintypes.INT]
+    user32.GetSystemMetrics.restype = wintypes.INT
 
     gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
     gdi32.CreateCompatibleDC.restype = wintypes.HDC
@@ -212,6 +214,28 @@ def paint(win, image, x, y):
                 user32.ReleaseDC(None, screen_dc)
     except Exception:
         return False
+
+
+def virtual_screen():
+    """(x, y, w, h, monitor count) of the virtual desktop, or None off Windows.
+
+    Read live from GetSystemMetrics on every call. Tk snapshots the screen layout
+    once at startup and never refreshes it, so after a monitor is plugged in or
+    pulled every Tk-derived coordinate is stale; these numbers are not.
+    """
+    if not SUPPORTED:
+        return None
+    try:
+        metrics = user32.GetSystemMetrics
+        return (
+            metrics(76),  # SM_XVIRTUALSCREEN
+            metrics(77),  # SM_YVIRTUALSCREEN
+            metrics(78),  # SM_CXVIRTUALSCREEN
+            metrics(79),  # SM_CYVIRTUALSCREEN
+            metrics(80),  # SM_CMONITORS
+        )
+    except Exception:
+        return None
 
 
 def work_area(x, y):
