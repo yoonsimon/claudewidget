@@ -64,7 +64,7 @@ BUBBLE_CODE_TEXT = (185, 28, 60)
 BUBBLE_CODE_BG = (244, 244, 247)
 BUBBLE_RULE = (226, 226, 232)
 BUBBLE_MAX_TEXT_W = 300
-MAX_BUBBLE_LINES = 6  # drawn lines, not source lines: this is what bounds the height
+MAX_BUBBLE_BODY_H = 150  # px of text area; the whole bubble lands near 210px
 
 if IS_MAC:
     FONT_REGULAR = ("AppleSDGothicNeo.ttc", "AppleGothic.ttf", "Helvetica.ttc")
@@ -485,24 +485,35 @@ def layout_markdown(text, max_width):
     return lines, width, height
 
 
-def cap_lines(lines, y):
-    """Keep the bubble short enough to stay on screen.
+def line_height(line, fallback):
+    return max((sum(t["font"].getmetrics()) for t in line["tokens"]), default=fallback)
 
-    Counting characters does not bound the height: Korean fits about 21 characters
-    per rendered line, so a 60 character limit still produces three. Only the number
-    of drawn lines does.
+
+def cap_lines(lines, y):
+    """Cut the body at a fixed pixel height.
+
+    Counting characters cannot bound the height (Korean fits ~21 per drawn line, so
+    a 60 character limit still makes three), and counting lines leaves it drifting:
+    blank lines and headings add space that lines do not account for. Only measuring
+    the drawn height pins it down.
     """
-    drawn = [line for line in lines if line["kind"] != "rule"]
-    if len(drawn) <= MAX_BUBBLE_LINES:
+    limit = MAX_BUBBLE_BODY_H * SS
+    if y <= limit:
         return lines, y
 
-    keep = drawn[:MAX_BUBBLE_LINES]
-    cutoff = keep[-1]
-    kept = lines[: lines.index(cutoff) + 1]
-
     font = load_font(FONT_REGULAR, 14 * SS)
-    last_h = max((sum(t["font"].getmetrics()) for t in cutoff["tokens"]), default=sum(font.getmetrics()))
-    ellipsis_y = cutoff["y"] + last_h + LINE_GAP * SS
+    ellipsis_h = sum(font.getmetrics())
+    budget = limit - ellipsis_h - LINE_GAP * SS
+
+    kept = []
+    for line in lines:
+        height = ellipsis_h if line["kind"] == "rule" else line_height(line, ellipsis_h)
+        if kept and line["y"] + height > budget:
+            break
+        kept.append(line)
+
+    cutoff = kept[-1]
+    ellipsis_y = cutoff["y"] + line_height(cutoff, ellipsis_h) + LINE_GAP * SS
     kept.append(
         {
             "y": ellipsis_y,
