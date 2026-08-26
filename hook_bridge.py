@@ -16,6 +16,7 @@ import single_instance
 BASE = Path(__file__).resolve().parent
 STATE_DIR = BASE / "state"
 WIDGET_PATH = BASE / "widget.py"
+PAUSE_PATH = STATE_DIR / "_paused"  # while this exists the hook does nothing at all
 
 MAX_SNIPPET = 260
 MAX_LINES = 8
@@ -111,6 +112,24 @@ def save_state(state):
             tmp.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def is_paused():
+    """True while the user has switched the widget off.
+
+    Quitting alone would not stick: the next hook would just start it again. The
+    pause file holds the timestamp it expires at, or "forever".
+    """
+    try:
+        raw = PAUSE_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        return False
+    if raw == "forever":
+        return True
+    try:
+        return time.time() < float(raw)
+    except ValueError:
+        return False
 
 
 def read_payload():
@@ -213,6 +232,9 @@ def ensure_widget_running():
 
 
 def main():
+    if is_paused():
+        return
+
     payload = read_payload()
     event = payload.get("hook_event_name", "")
     folder = project_folder(payload)

@@ -91,23 +91,53 @@ which python3
 
 ### 5. 훅이 안전한지 직접 검증
 
-훅을 등록했으면, 등록한 명령이 **실패해도 0으로 끝나는지** 확인한다.
+훅을 등록했으면, 등록한 명령이 **실패해도 0으로 끝나는지** 반드시 눈으로 확인한다.
+문장을 출력하는 것으로는 확인이 안 된다. 종료 코드를 실제로 찍어야 한다.
+
+bash 계열:
 
 ```bash
-echo {} | <PYTHON> "<WIDGET>\hook.py"
-echo "exit code should be 0"
+echo {} | <PYTHON> "<WIDGET>/hook.py"; echo "exit=$?"
 ```
 
-0 이 아니면 즉시 방금 추가한 훅을 되돌리고 사용자에게 알린다.
+PowerShell:
+
+```powershell
+'{}' | & "<PYTHON>" "<WIDGET>\hook.py"; "exit=$LASTEXITCODE"
+```
+
+출력이 `exit=0` 이 아니면 **즉시 방금 추가한 훅을 되돌리고** 사용자에게 알린다.
+0 이 아닌 종료 코드는 그 머신의 모든 Claude Code 세션에서 모든 도구를 차단한다.
+
+이어서 대상 파일이 없어도 0 으로 끝나는지도 확인한다. 이게 이 래퍼의 존재 이유다.
+
+```bash
+mv "<WIDGET>/hook_bridge.py" "<WIDGET>/hook_bridge.bak"
+echo {} | <PYTHON> "<WIDGET>/hook.py"; echo "exit=$?"
+mv "<WIDGET>/hook_bridge.bak" "<WIDGET>/hook_bridge.py"
+```
+
+여기서도 `exit=0` 이어야 한다. 확인 후 파일을 반드시 원래 이름으로 되돌릴 것.
 
 ### 6. 위젯 실행
 
-```bash
-<PYTHONW> "<WIDGET>\widget.py"
+`<PYTHONW>` 는 1단계에서 찾은 `pythonw` 경로다. 없으면 `<PYTHON>` 을 쓴다.
+
+위젯은 창을 띄우고 계속 실행되므로 **반드시 백그라운드로 띄운다.** 포그라운드로 실행하면
+명령이 반환되지 않아 도구 타임아웃에 걸리고, 프로세스 정리 과정에서 방금 띄운 위젯까지 죽는다.
+
+PowerShell:
+
+```powershell
+Start-Process -FilePath "<PYTHONW>" -ArgumentList "<WIDGET>\widget.py"
 ```
 
-윈도우에서는 `pythonw` 로 실행해야 콘솔 창이 안 뜬다.
-맥에서는 `python3 "<WIDGET>/widget.py" &` 로 실행한다.
+맥:
+
+```bash
+"<PYTHON>" "<WIDGET>/widget.py" &
+```
+
 화면에 캐릭터가 나타나면 성공이다.
 훅이 등록됐으므로 다음부터는 Claude Code 가 도구를 쓸 때 위젯이 자동으로 뜬다.
 
@@ -125,7 +155,16 @@ echo "exit code should be 0"
 ## 제거
 
 1. `~/.claude/settings.json` 에서 `hook.py` 를 참조하는 훅 항목 3개를 지운다.
-2. 실행 중인 위젯을 종료한다. (우클릭 → 종료, 또는 `taskkill /F /IM pythonw.exe`)
+2. 실행 중인 위젯을 종료한다. 우클릭 메뉴의 "끄기 → 다시 켤 때까지 끄기" 가 가장 안전하다.
+   강제로 끝내야 한다면 이 위젯만 골라서 끝낸다. `taskkill /F /IM pythonw.exe` 는
+   머신의 모든 pythonw 프로세스를 죽이므로 쓰지 말 것.
+
+   ```powershell
+   Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" |
+     Where-Object { $_.CommandLine -like '*widget.py*' } |
+     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+   ```
+
 3. 저장소 폴더를 지운다.
 
 ## 맥에서 확인할 것 (실기 검증 전)
@@ -142,9 +181,12 @@ echo "exit code should be 0"
 
 ## 문제가 생겼을 때
 
-**모든 도구가 훅 오류로 막힌 경우.** 훅이 참조하는 파일이 사라졌을 때 생긴다.
-Claude Code 는 스스로 고칠 수 없다 (설정 파일을 읽는 것조차 막히기 때문). 사용자가 직접
-`~/.claude/settings.json` 에서 해당 훅 항목을 지우거나, 파일을 원래 경로로 되돌려야 한다.
+**모든 도구가 훅 오류로 막힌 경우.** `hook.py` 는 대상이 없거나 깨져도 0 으로 끝나므로
+`hook_bridge.py` 가 사라진 것으로는 이 증상이 생기지 않는다. 실제 원인은 둘 중 하나다.
+`hook.py` 자체가 없거나 (폴더를 옮겼을 때), settings.json 의 `<PYTHON>` 경로가 사라졌을 때다.
+
+Claude Code 는 스스로 고칠 수 없다. 설정 파일을 읽는 것조차 막히기 때문이다. 사용자가 직접
+`~/.claude/settings.json` 에서 해당 훅 항목을 지우거나, 폴더를 원래 경로로 되돌려야 한다.
 
 **말풍선이 안 뜨는 경우.** `<WIDGET>\state\` 에 프로젝트별 JSON 이 생기는지 확인한다.
 파일이 없으면 훅이 안 불리는 것이고, 파일은 있는데 말풍선이 없으면 위젯 프로세스가 죽은 것이다.

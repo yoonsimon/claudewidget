@@ -27,6 +27,7 @@ BASE = Path(__file__).resolve().parent
 CONFIG_PATH = BASE / "config.json"
 STATE_DIR = BASE / "state"
 DEFAULT_IMAGE = BASE / "assets" / "default.png"
+PAUSE_PATH = STATE_DIR / "_paused"  # written by the off menu, read by the hook
 
 DEFAULT_CONFIG = {
     "image_path": "",
@@ -141,6 +142,11 @@ def save_json(path, data):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+def seconds_until_tomorrow():
+    now = time.localtime()
+    return 86400 - (now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec)
 
 
 def hex_to_rgb(value):
@@ -526,7 +532,7 @@ class BubbleStack:
         self.master = master
         self.bubbles = {}
 
-    def update(self, entries, tip_x, tip_y):
+    def update(self, entries, tip_x, tip_y, on_click=None):
         """entries: list of (folder, text) ordered oldest first, newest last."""
         wanted = {folder for folder, _ in entries}
         for folder in list(self.bubbles):
@@ -543,6 +549,9 @@ class BubbleStack:
             bubble = self.bubbles.get(folder)
             if bubble is None:
                 bubble = self.bubbles[folder] = SpeechBubble(self.master)
+                if on_click is not None:
+                    # A bubble is opaque to clicks, so it has to offer a way out.
+                    bubble.win.bind("<Button-1>", lambda _e, f=folder: on_click(f))
             bubble.render(text, folder, with_tail=index == 0)
             if index == 0:
                 x = tip_x - bubble.tail_dx
@@ -688,6 +697,7 @@ class Widget:
         self._dragged = False
         self._bubble_payload = []
         self._layout_dirty = False
+        self._dismissed = {}
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -697,6 +707,8 @@ class Widget:
 
         self.bubbles = BubbleStack(self.root)
         self.panel = UsagePanel(self.root)
+        # The panel is opaque to clicks too, so clicking it closes it.
+        self.panel.win.bind("<Button-1>", lambda _e: self.toggle_panel())
 
         self.load_image(self.config.get("image_path", ""))
         self.bind_events()
@@ -831,8 +843,27 @@ class Widget:
         label = "항상 위 끄기" if self.config.get("always_on_top", True) else "항상 위 켜기"
         menu.add_command(label=label, command=self.toggle_topmost)
         menu.add_separator()
-        menu.add_command(label="종료", command=self.quit)
+
+        off_menu = tk.Menu(menu, tearoff=0)
+        off_menu.add_command(label="1시간 끄기", command=lambda: self.pause(3600))
+        off_menu.add_command(label="오늘 하루 끄기", command=lambda: self.pause(seconds_until_tomorrow()))
+        off_menu.add_command(label="다시 켤 때까지 끄기", command=lambda: self.pause(None))
+        menu.add_cascade(label="끄기", menu=off_menu)
+        menu.add_command(label="이번만 닫기", command=self.quit)
         menu.tk_popup(event.x_root, event.y_root)
+
+    def pause(self, seconds):
+        """Stop the hooks from bringing the widget back, then close it.
+
+        Plain quit does not stick: the next tool call would start it again.
+        """
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            value = "forever" if seconds is None else str(time.time() + seconds)
+            PAUSE_PATH.write_text(value, encoding="utf-8")
+        except Exception:
+            pass
+        self.quit()
 
     def change_image(self):
         path = filedialog.askopenfilename(
@@ -866,8 +897,11 @@ class Widget:
         entries = []
         for state in read_states():
             text = bubble_text(state)
-            if text:
-                entries.append((state.get("folder") or "", text, state.get("ts", 0)))
+            folder = state.get("folder") or ""
+            ts = state.get("ts", 0)
+            # A dismissed bubble stays gone until that project says something new.
+            if text and ts > self._dismissed.get(folder, 0):
+                entries.append((folder, text, ts))
 
         # Oldest first so the newest ends up nearest the character.
         entries.sort(key=lambda item: item[2])
@@ -881,7 +915,13 @@ class Widget:
     def place_bubbles(self):
         tip_x = self.root.winfo_x() + self.root.winfo_width() - 20
         tip_y = self.root.winfo_y() + 4
-        self.bubbles.update(getattr(self, "_bubble_payload", []), tip_x, tip_y)
+        self.bubbles.update(
+            getattr(self, "_bubble_payload", []), tip_x, tip_y, on_click=self.dismiss_bubble
+        )
+
+    def dismiss_bubble(self, folder):
+        self._dismissed[folder] = time.time()
+        self.refresh_bubbles()
 
     def quit(self):
         self.root.destroy()
@@ -891,5 +931,7 @@ class Widget:
 
 
 if __name__ == "__main__":
+    # Starting it by hand is the way back from "다시 켤 때까지 끄기".
+    PAUSE_PATH.unlink(missing_ok=True)
     # The lock was already taken at the top of this file, before the heavy imports.
     Widget().run()
