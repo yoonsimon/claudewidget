@@ -41,6 +41,7 @@ BUBBLES = {
 PANELS = {
     "loading": {"loading": True},
     "error": {"error": "no-credentials"},
+    "blocked": {"error": "http-403"},
     "rows": {
         "rows": [
             {"label": "세션 (5시간)", "percent": 43.0, "color": "#22c55e", "reset": "2시간 35분 후"},

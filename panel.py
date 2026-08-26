@@ -86,7 +86,9 @@ class UsagePanel:
         detail = fit_parts(token.get("parts") or [], font_label, inner) if token else ""
 
         if "error" in self.data:
-            body_h = line_h + gap * SS
+            # Blocked shows two lines; the others one. Keep this in step with render.
+            error_lines = 2 if self.data["error"] in ("http-403", "http-429") else 1
+            body_h = error_lines * (line_h + 3 * SS) + gap * SS - 3 * SS
         elif self.data.get("loading"):
             body_h = line_h + gap * SS
         else:
@@ -108,13 +110,22 @@ class UsagePanel:
         y += line_h + gap * SS
 
         if "error" in self.data:
-            message = {
-                "no-credentials": "로그인 정보를 찾을 수 없습니다",
-                "unreachable": "사용량을 가져오지 못했습니다",
-                "no-data": "표시할 사용량이 없습니다",
-            }.get(self.data["error"], f"오류: {self.data['error']}")
-            d.text((x, y), message, font=font_label, fill=(140, 140, 148))
-            y += line_h + gap * SS
+            err = self.data["error"]
+            # A 403 or 429 on this endpoint is Anthropic refusing the request, which
+            # is the case worth calling out rather than a generic failure line.
+            blocked = err in ("http-403", "http-429")
+            lines = {
+                "no-credentials": ["로그인 정보를 찾을 수 없습니다"],
+                "unreachable": ["사용량을 가져오지 못했습니다"],
+                "no-data": ["표시할 사용량이 없습니다"],
+                "http-403": ["이런! ㅠㅠ", "Anthropic 에 의해 차단당했습니다..."],
+                "http-429": ["이런! ㅠㅠ", "요청이 너무 많아 잠시 막혔습니다..."],
+            }.get(err, [f"오류: {err}"])
+            colour = (200, 70, 70) if blocked else (140, 140, 148)
+            for line in lines:
+                d.text((x, y), line, font=font_label, fill=colour)
+                y += line_h + 3 * SS
+            y += gap * SS - 3 * SS
         elif self.data.get("loading"):
             d.text((x, y), "불러오는 중...", font=font_label, fill=(140, 140, 148))
             y += line_h + gap * SS
