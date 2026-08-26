@@ -196,6 +196,10 @@ def trim_snippet(text):
 
     while kept and not kept[-1].strip():
         kept.pop()
+
+    # Cutting inside a fence would leave it open and render the rest as one code block.
+    if sum(1 for line in kept if line.startswith("```")) % 2:
+        kept.append("```")
     return "\n".join(kept)
 
 

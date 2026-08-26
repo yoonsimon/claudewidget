@@ -193,6 +193,10 @@ class Canvas:
     """
 
     use_layered = win_layered.SUPPORTED
+    # A layered paint can fail for passing reasons (session lock, RDP reconnect, DWM
+    # restart), so one failure must not downgrade the rest of the process.
+    failures = 0
+    MAX_FAILURES = 3
 
     def __init__(self, win):
         self.win = win
@@ -210,6 +214,19 @@ class Canvas:
     def size(self):
         return self.image.size if self.image else (0, 0)
 
+    def downgrade_all_windows(self):
+        """Switch every window to the colour key, not just this one.
+
+        winfo_toplevel() returns the Toplevel itself when called on one, so asking
+        it for children would skip the root and leave the character frozen.
+        """
+        root = self.win.nametowidget(".")
+        for window in (root, *[w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]):
+            try:
+                make_transparent(window)
+            except Exception:
+                pass
+
     def show(self, image, x, y):
         self.image = image
         w, h = image.size
@@ -219,13 +236,13 @@ class Canvas:
             # pending map/resize before handing the bitmap over.
             self.win.update_idletasks()
             if win_layered.paint(self.win, image, x, y):
+                Canvas.failures = 0
                 return
-            # One failure means this machine cannot do it; fall back for good.
+            Canvas.failures += 1
+            if Canvas.failures < Canvas.MAX_FAILURES:
+                return  # transient: keep the old surface and try again next time
             Canvas.use_layered = False
-            make_transparent(self.win)
-            for sibling in self.win.winfo_toplevel().winfo_children():
-                if isinstance(sibling, tk.Toplevel):
-                    make_transparent(sibling)
+            self.downgrade_all_windows()
         self._photo = ImageTk.PhotoImage(key_out(image))
         self.label.configure(image=self._photo)
         self.win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
@@ -330,6 +347,30 @@ def split_tokens(runs, heading=False):
     return tokens
 
 
+def split_to_fit(tokens, available):
+    """Break tokens that are wider than the line, so the bubble cannot grow past it.
+
+    A URL or a long unbroken string has no space to wrap at, and letting it overflow
+    stretched the bubble to whatever the token measured.
+    """
+    out = []
+    for token in tokens:
+        font = token["font"]
+        if available <= 0 or font.getlength(token["text"]) <= available:
+            out.append(token)
+            continue
+        chunk = ""
+        for char in token["text"]:
+            if chunk and font.getlength(chunk + char) > available:
+                out.append(dict(token, text=chunk, trailing=0))
+                chunk = char
+            else:
+                chunk += char
+        if chunk:
+            out.append(dict(token, text=chunk))
+    return out
+
+
 def layout_markdown(text, max_width):
     """Turn markdown into positioned lines.
 
@@ -349,6 +390,36 @@ def layout_markdown(text, max_width):
             y += RULE_GAP * SS
             lines.append({"y": y, "indent": 0, "kind": "rule", "tokens": []})
             y += RULE_GAP * SS
+            continue
+
+        if kind == "code":
+            # A fenced line is one unit: splitting it into words would lose the
+            # indentation and paint a separate pill behind every word.
+            block_font = load_font(FONT_MONO if block["runs"][0][0].isascii() else FONT_REGULAR, 12 * SS)
+            lines.append(
+                {
+                    "y": y,
+                    "indent": 0,
+                    "marker": "",
+                    "marker_font": block_font,
+                    "marker_w": 0,
+                    "kind": "code",
+                    "tokens": [
+                        {
+                            "text": block["runs"][0][0],
+                            "trailing": 0,
+                            "style": "code",
+                            "font": block_font,
+                            "colour": BUBBLE_CODE_TEXT,
+                            "x": 0,
+                            "w": int(block_font.getlength(block["runs"][0][0])),
+                        }
+                    ],
+                }
+            )
+            line_h = sum(block_font.getmetrics())
+            y += line_h + LINE_GAP * SS
+            width = max(width, min(int(block_font.getlength(block["runs"][0][0])), max_width))
             continue
 
         heading = kind == "heading"
@@ -395,14 +466,11 @@ def layout_markdown(text, max_width):
             current = []
             first_line = False
 
-        for token in tokens:
+        for token in split_to_fit(tokens, available):
             token_w = int(token["font"].getlength(token["text"]))
             space_w = int(token["font"].getlength(" ")) * min(token["trailing"], 1)
             if current and x + token_w > available:
                 flush()
-            if token_w > available and not current:
-                # a single unbreakable word: let it overflow rather than vanish
-                pass
             token = dict(token, x=x, w=token_w)
             current.append(token)
             x += token_w + space_w
@@ -437,9 +505,13 @@ def draw_markdown(d, lines, ox, oy, width):
                 [bar, y, bar + 2 * SS, y + height], radius=SS, fill=BUBBLE_RULE
             )
 
+        if line["kind"] == "code":
+            # One background for the whole line, spanning the card, not per token.
+            d.rectangle([ox - 4 * SS, y - 2 * SS, ox + width + 4 * SS, y + height + SS], fill=BUBBLE_CODE_BG)
+
         for token in line["tokens"]:
             tx = x0 + token["x"]
-            if token["style"] == "code" or line["kind"] == "code":
+            if token["style"] == "code" and line["kind"] != "code":
                 d.rounded_rectangle(
                     [tx - 3 * SS, y - SS, tx + token["w"] + 3 * SS, y + height],
                     radius=3 * SS,
@@ -527,6 +599,7 @@ class BubbleStack:
     """Keeps one bubble per folder, stacked upward from the character."""
 
     GAP = 6
+    MAX_VISIBLE = 3  # more than this buries the screen and runs off the top edge
 
     def __init__(self, master):
         self.master = master
@@ -534,6 +607,7 @@ class BubbleStack:
 
     def update(self, entries, tip_x, tip_y, on_click=None):
         """entries: list of (folder, text) ordered oldest first, newest last."""
+        entries = entries[-self.MAX_VISIBLE :]
         wanted = {folder for folder, _ in entries}
         for folder in list(self.bubbles):
             if folder not in wanted:
@@ -545,6 +619,8 @@ class BubbleStack:
         bottom_first = list(reversed(entries))
         right = None
         y = tip_y
+        area = win_layered.work_area(tip_x, tip_y)
+        ceiling = area[1] if area else None
         for index, (folder, text) in enumerate(bottom_first):
             bubble = self.bubbles.get(folder)
             if bubble is None:
@@ -558,7 +634,12 @@ class BubbleStack:
                 right = x + bubble.width
             else:
                 x = right - bubble.width
-            y -= bubble.height + (0 if index == 0 else self.GAP)
+            top = y - bubble.height - (0 if index == 0 else self.GAP)
+            if ceiling is not None and top < ceiling and index > 0:
+                # Out of room upward: the rest would be drawn off the top edge.
+                bubble.hide()
+                continue
+            y = top
             bubble.place(x, y)
 
     def clear(self):
@@ -579,11 +660,19 @@ class UsagePanel:
         self.canvas = Canvas(self.win)
         self.win.withdraw()
         self.image = None
+        self._signature = None
         self.data = {"loading": True}
         self.open = False
         self._refresh_job = None
 
     def render(self):
+        # Dragging the character with the panel open re-rendered it on every mouse
+        # move, supersampled at 3x. Nothing changes unless the data does.
+        signature = json.dumps(self.data, sort_keys=True, default=str)
+        if signature == self._signature and self.image is not None:
+            return self.image.size
+        self._signature = signature
+
         pad, radius, gap = 14, 14, 9
         bar_h, row_gap = 6, 13
         font_title = load_font(FONT_BOLD, 12 * SS)
@@ -657,10 +746,17 @@ class UsagePanel:
         w, h = self.render()
         x = char_x + char_w // 2 - w // 2
         y = char_y + char_h + 6
-        # Always sits below the character; only pulled up far enough to stay on screen.
-        bottom = self.master.winfo_vrooty() + self.master.winfo_vrootheight()
-        if y + h > bottom:
-            y = bottom - h
+
+        # Clamped against the monitor the character is on, not the whole virtual
+        # desktop: with two monitors the desktop rectangle is taller than either
+        # screen, so a whole-desktop clamp never fires.
+        area = win_layered.work_area(char_x + char_w // 2, char_y + char_h // 2)
+        if area:
+            left, top, right, bottom = area
+            if y + h > bottom:
+                y = char_y - h - 6  # no room below: flip above the character
+            y = max(top, min(y, bottom - h))
+            x = max(left, min(x, right - w))
         self.canvas.show(self.image, x, y)
 
     def show(self):
@@ -756,14 +852,29 @@ class Widget:
     def paint_character(self):
         self.canvas.show(self.frames[self.frame_index][0], self.root.winfo_x(), self.root.winfo_y())
 
+    def default_position(self):
+        w, h = self.img_size
+        return self.root.winfo_screenwidth() - w - 40, self.root.winfo_screenheight() - h - 80
+
     def position_window(self):
         w, h = self.img_size
         x = self.config.get("x")
         y = self.config.get("y")
-        if x is None or y is None:
-            x = self.root.winfo_screenwidth() - w - 40
-            y = self.root.winfo_screenheight() - h - 80
+        # A saved position can point at a monitor that is no longer attached. Every
+        # control starts with clicking the character, so an off-screen widget would be
+        # unrecoverable.
+        if x is None or y is None or not win_layered.on_any_monitor(int(x), int(y), w, h):
+            x, y = self.default_position()
         self.canvas.show(self.frames[self.frame_index][0], x, y)
+
+    def reset_position(self):
+        x, y = self.default_position()
+        self.config["x"], self.config["y"] = x, y
+        save_json(CONFIG_PATH, self.config)
+        self.canvas.show(self.frames[self.frame_index][0], x, y)
+        self.place_bubbles()
+        if self.panel.open:
+            self.place_panel()
 
     def bind_events(self):
         # Bound on the window, not the label: a layered window paints its own surface,
@@ -842,6 +953,7 @@ class Widget:
 
         label = "항상 위 끄기" if self.config.get("always_on_top", True) else "항상 위 켜기"
         menu.add_command(label=label, command=self.toggle_topmost)
+        menu.add_command(label="위치 초기화", command=self.reset_position)
         menu.add_separator()
 
         off_menu = tk.Menu(menu, tearoff=0)
