@@ -64,6 +64,7 @@ BUBBLE_CODE_TEXT = (185, 28, 60)
 BUBBLE_CODE_BG = (244, 244, 247)
 BUBBLE_RULE = (226, 226, 232)
 BUBBLE_MAX_TEXT_W = 300
+MAX_BUBBLE_LINES = 6  # drawn lines, not source lines: this is what bounds the height
 
 if IS_MAC:
     FONT_REGULAR = ("AppleSDGothicNeo.ttc", "AppleGothic.ttf", "Helvetica.ttc")
@@ -479,8 +480,51 @@ def layout_markdown(text, max_width):
         if kind in ("heading", "code"):
             y += BLOCK_GAP * SS // 2
 
+    lines, y = cap_lines(lines, y)
     height = max(0, y - LINE_GAP * SS)
     return lines, width, height
+
+
+def cap_lines(lines, y):
+    """Keep the bubble short enough to stay on screen.
+
+    Counting characters does not bound the height: Korean fits about 21 characters
+    per rendered line, so a 60 character limit still produces three. Only the number
+    of drawn lines does.
+    """
+    drawn = [line for line in lines if line["kind"] != "rule"]
+    if len(drawn) <= MAX_BUBBLE_LINES:
+        return lines, y
+
+    keep = drawn[:MAX_BUBBLE_LINES]
+    cutoff = keep[-1]
+    kept = lines[: lines.index(cutoff) + 1]
+
+    font = load_font(FONT_REGULAR, 14 * SS)
+    last_h = max((sum(t["font"].getmetrics()) for t in cutoff["tokens"]), default=sum(font.getmetrics()))
+    ellipsis_y = cutoff["y"] + last_h + LINE_GAP * SS
+    kept.append(
+        {
+            "y": ellipsis_y,
+            "indent": 0,
+            "marker": "",
+            "marker_font": font,
+            "marker_w": 0,
+            "kind": "text",
+            "tokens": [
+                {
+                    "text": "…",
+                    "trailing": 0,
+                    "style": "",
+                    "font": font,
+                    "colour": BUBBLE_MUTED,
+                    "x": 0,
+                    "w": int(font.getlength("…")),
+                }
+            ],
+        }
+    )
+    return kept, ellipsis_y + sum(font.getmetrics()) + LINE_GAP * SS
 
 
 def draw_markdown(d, lines, ox, oy, width):
