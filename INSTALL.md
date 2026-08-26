@@ -171,7 +171,7 @@ Start-Process -FilePath "<PYTHONW>" -ArgumentList "<WIDGET>\widget.py"
 
 맥에서 처음 돌린다면 아래를 하나씩 보고, 어긋나면 고친 뒤 사용자에게 보고할 것.
 
-1. **투명 배경.** `widget.py` 는 맥에서 `-transparent` 와 `systemTransparent` 를 쓴다.
+1. **투명 배경.** `imaging.py` 는 맥에서 `-transparent` 와 `systemTransparent` 를 쓴다.
    배경이 검은 사각형으로 나오면 Tk 버전 문제이니 다른 방식을 찾아야 한다.
 2. **폰트.** 한글이 네모로 나오면 `FONT_REGULAR` 후보를 실제 존재하는 파일로 바꾼다.
    `.ttc` 는 여러 서체가 묶여 있어 굵은 글씨가 안 잡히면 인덱스 지정이 필요하다.
