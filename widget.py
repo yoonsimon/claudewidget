@@ -1,6 +1,14 @@
+if __name__ == "__main__":
+    # Before anything heavy: a second instance would otherwise spend ~600ms importing
+    # PIL and tkinter only to lose the lock and exit. Kept above the imports on
+    # purpose, and guarded so importing this module for tests stays side-effect free.
+    import single_instance
+
+    if not single_instance.acquire():
+        raise SystemExit(0)
+
 import json
 import re
-import socket
 import sys
 import threading
 import time
@@ -19,7 +27,6 @@ BASE = Path(__file__).resolve().parent
 CONFIG_PATH = BASE / "config.json"
 STATE_DIR = BASE / "state"
 DEFAULT_IMAGE = BASE / "assets" / "default.png"
-LOCK_PORT = 47311  # arbitrary local port used only to prevent double-launch
 
 DEFAULT_CONFIG = {
     "image_path": "",
@@ -30,7 +37,12 @@ DEFAULT_CONFIG = {
 }
 
 DONE_LINGER = 8  # seconds a finished reply keeps its bubble
-STALE_AFTER = 30 * 60  # a session quiet this long stops being shown
+# A session that is interrupted or killed never sends Stop, so its last state would
+# otherwise sit on screen claiming to be busy. Each state gets its own expiry.
+RUNNING_LINGER = 90  # "실행중: <tool>"
+WORKING_LINGER = 180  # "작업중..." between tools, where Claude may be thinking
+WAITING_LINGER = 10 * 60  # a real permission prompt can wait a long time
+STALE_AFTER = 30 * 60  # after this the state file itself is deleted
 
 SIZE_PRESETS = [("작게", 96), ("보통", 128), ("크게", 180), ("아주 크게", 240)]
 
@@ -69,7 +81,11 @@ SS = 3  # supersampling factor for smooth rounded corners
 
 
 def read_states():
-    """Every session's current state, newest write wins per file."""
+    """Every session's current state, newest write wins per file.
+
+    Stale files are deleted rather than skipped: they hold a snippet of the last
+    reply, so leaving them on disk keeps that text around indefinitely.
+    """
     states = []
     if not STATE_DIR.exists():
         return states
@@ -80,6 +96,10 @@ def read_states():
         except Exception:
             continue
         if now - float(state.get("ts") or 0) > STALE_AFTER:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
             continue
         states.append(state)
     return states
@@ -89,15 +109,17 @@ def bubble_text(state):
     """The line a state should show, or "" when it should show nothing."""
     kind = state.get("state", "idle")
     text = (state.get("text") or "").strip()
+    age = time.time() - float(state.get("ts") or 0)
+
     if kind == "running":
         tool = state.get("tool") or ""
-        return f"실행중: {tool}" if tool else "작업중..."
+        if tool:
+            return f"실행중: {tool}" if age <= RUNNING_LINGER else ""
+        return "작업중..." if age <= WORKING_LINGER else ""
     if kind == "waiting":
-        return text or "입력을 기다리고 있어요"
+        return (text or "입력을 기다리고 있어요") if age <= WAITING_LINGER else ""
     if kind == "done" and text:
-        if time.time() - float(state.get("ts") or 0) > DONE_LINGER:
-            return ""
-        return text
+        return text if age <= DONE_LINGER else ""
     return ""
 
 
@@ -864,18 +886,6 @@ class Widget:
         self.root.mainloop()
 
 
-def acquire_single_instance_lock():
-    # Binding a local TCP port fails if another instance already holds it.
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", LOCK_PORT))
-    except OSError:
-        return None
-    return sock
-
-
 if __name__ == "__main__":
-    lock = acquire_single_instance_lock()
-    if lock is None:
-        sys.exit(0)  # already running
+    # The lock was already taken at the top of this file, before the heavy imports.
     Widget().run()
