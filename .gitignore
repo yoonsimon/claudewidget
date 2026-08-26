@@ -1,6 +1,5 @@
 # 실행 중 생성되는 로컬 상태
 config.json
-state/
 *.tmp
 __pycache__/
 

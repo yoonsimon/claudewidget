@@ -19,24 +19,24 @@ from ctypes import wintypes
 
 SUPPORTED = sys.platform == "win32"
 
-if SUPPORTED:
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
-
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000
 ULW_ALPHA = 0x00000002
 AC_SRC_OVER = 0x00
 AC_SRC_ALPHA = 0x01
 BI_RGB = 0
+DIB_RGB_COLORS = 0
+
+# LONG_PTR: 64-bit on Win64, plain LONG on Win32. wintypes has no name for it.
+LONG_PTR = ctypes.c_ssize_t
 
 
 class BLENDFUNCTION(ctypes.Structure):
     _fields_ = [
-        ("BlendOp", ctypes.c_byte),
-        ("BlendFlags", ctypes.c_byte),
-        ("SourceConstantAlpha", ctypes.c_byte),
-        ("AlphaFormat", ctypes.c_byte),
+        ("BlendOp", wintypes.BYTE),
+        ("BlendFlags", wintypes.BYTE),
+        ("SourceConstantAlpha", wintypes.BYTE),
+        ("AlphaFormat", wintypes.BYTE),
     ]
 
 
@@ -71,6 +71,74 @@ class MONITORINFO(ctypes.Structure):
 
 MONITOR_DEFAULTTONEAREST = 2
 
+if SUPPORTED:
+    # Private handles rather than ctypes.windll.*, which caches one shared instance
+    # per DLL: pinning argtypes on that would rewrite the prototypes every other
+    # module in the process sees. use_last_error keeps GetLastError readable after a
+    # call, so a refused paint can be diagnosed instead of guessed at.
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+
+    # Every prototype below has to be pinned. ctypes assumes a C `int` return for an
+    # undeclared function, which on Win64 truncates the 64-bit DC and bitmap handles
+    # to their low 32 bits. Handles are small early in a session so that usually
+    # happens to work, and then does not on a machine where they are not: the paint
+    # quietly returns 0 and the widget falls back to the jagged colour key. Declared
+    # argtypes also turn a wrong argument into an exception here instead of letting
+    # GDI read a half-formed pointer.
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.GetDC.restype = wintypes.HDC
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    user32.ReleaseDC.restype = wintypes.INT
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.UpdateLayeredWindow.argtypes = [
+        wintypes.HWND,
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.POINT),
+        ctypes.POINTER(wintypes.SIZE),
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.POINT),
+        wintypes.COLORREF,
+        ctypes.POINTER(BLENDFUNCTION),
+        wintypes.DWORD,
+    ]
+    user32.UpdateLayeredWindow.restype = wintypes.BOOL
+    # POINT goes to MonitorFromPoint by value, not through a pointer.
+    user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+    user32.MonitorFromPoint.restype = wintypes.HMONITOR
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+    user32.GetMonitorInfoW.restype = wintypes.BOOL
+
+    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    gdi32.DeleteDC.restype = wintypes.BOOL
+    gdi32.CreateDIBSection.argtypes = [
+        wintypes.HDC,
+        ctypes.POINTER(BITMAPINFO),
+        wintypes.UINT,
+        ctypes.POINTER(ctypes.c_void_p),
+        wintypes.HANDLE,
+        wintypes.DWORD,
+    ]
+    gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+
+    # Win64 exports the ...Ptr forms and its non-Ptr pair truncates anything
+    # pointer-sized; Win32 only has the non-Ptr pair, with the SDK defining the Ptr
+    # names as macros over it. GWL_EXSTYLE itself is a 32-bit DWORD either way, so
+    # this is about calling the documented function, not about the value read today.
+    _get_window_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+    _set_window_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+    _get_window_long.argtypes = [wintypes.HWND, wintypes.INT]
+    _get_window_long.restype = LONG_PTR
+    _set_window_long.argtypes = [wintypes.HWND, wintypes.INT, LONG_PTR]
+    _set_window_long.restype = LONG_PTR
+
 
 def _handle(win):
     """The top-level HWND behind a tkinter window."""
@@ -88,9 +156,9 @@ def paint(win, image, x, y):
         return False
     try:
         hwnd = _handle(win)
-        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        style = _get_window_long(hwnd, GWL_EXSTYLE)
         if not style & WS_EX_LAYERED:
-            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
+            _set_window_long(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
 
         width, height = image.size
         # "BGRa" is PIL's premultiplied byte order, which is what the API expects.
@@ -110,7 +178,7 @@ def paint(win, image, x, y):
             mem_dc = gdi32.CreateCompatibleDC(screen_dc)
             bits = ctypes.c_void_p()
             bitmap = gdi32.CreateDIBSection(
-                screen_dc, ctypes.byref(info), 0, ctypes.byref(bits), None, 0
+                screen_dc, ctypes.byref(info), DIB_RGB_COLORS, ctypes.byref(bits), None, 0
             )
             if not bitmap:
                 return False

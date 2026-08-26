@@ -1,17 +1,20 @@
 """Claude Code usage lookup.
 
-Reads the OAuth access token from ~/.claude/.credentials.json and asks
-Anthropic's usage endpoint for the current limits. The token never leaves
-this process and is never logged.
+Reads the OAuth access token from ~/.claude/.credentials.json (macOS keeps it
+in the login keychain instead) and asks Anthropic's usage endpoint for the
+current limits. The token never leaves this process and is never logged.
 """
 
 import json
+import subprocess
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+KEYCHAIN_SERVICE = "Claude Code-credentials"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 TIMEOUT = 10
 
@@ -28,9 +31,51 @@ SEVERITY_COLORS = {
 }
 
 
-def read_access_token():
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects instead of forwarding the Authorization header.
+
+    HTTPRedirectHandler.redirect_request copies every request header except
+    content-length/content-type onto the redirect target, so a 302 from an
+    intercepting proxy would hand it our bearer token. Returning None falls
+    through to HTTPDefaultErrorHandler, which raises HTTPError(30x).
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect())
+
+
+def _read_credentials_text():
+    """Return the raw credentials JSON, or None if it cannot be obtained."""
     try:
-        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
+        return CREDENTIALS_PATH.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    if sys.platform != "darwin":
+        return None
+    # macOS Claude Code keeps the same JSON in the login keychain.
+    try:
+        done = subprocess.run(
+            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
+    except Exception:
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip() or None
+
+
+def read_access_token():
+    text = _read_credentials_text()
+    if text is None:
+        return None
+    try:
+        data = json.loads(text)
     except Exception:
         return None
     oauth = data.get("claudeAiOauth")
@@ -88,7 +133,7 @@ def request_usage():
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with _OPENER.open(request, timeout=TIMEOUT) as response:
             return json.loads(response.read().decode("utf-8")), None
     except urllib.error.HTTPError as exc:
         return None, f"http-{exc.code}"

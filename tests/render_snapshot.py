@@ -48,6 +48,14 @@ PANELS = {
             {"label": "주간 Fable", "percent": 19.0, "color": "#ef4444", "reset": "3일 10시간 후"},
         ]
     },
+    # The token line under the bars; without this fixture the tokens branch of
+    # panel.render never runs and "all snapshots match" says nothing about it.
+    "rows_tokens": {
+        "rows": [
+            {"label": "세션 (5시간)", "percent": 43.0, "color": "#22c55e", "reset": "2시간 35분 후"},
+        ],
+        "tokens": {"label": "오늘", "value": "1.2M", "parts": ["Opus 980.3K", "Sonnet 219.7K"]},
+    },
 }
 
 

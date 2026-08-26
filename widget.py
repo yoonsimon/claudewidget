@@ -33,55 +33,11 @@ from state import (
 )
 from theme import SIZE_PRESETS
 
-# The split moved code out of this module, not names off it. Everything the widget
-# used to define stays reachable as `widget.<name>`, so the snapshot test and anything
-# else pointed at this module keeps working without knowing about the new files.
+# The widget itself never draws a bubble directly, only through BubbleStack. This
+# import is what makes `widget.SpeechBubble` resolve for tests/render_snapshot.py,
+# which reaches the other three names it needs (UsagePanel, prepare_frame,
+# DEFAULT_IMAGE) through the imports above.
 from bubbles import SpeechBubble  # noqa: F401
-from imaging import bleed_rgb, downscale, key_out, make_transparent  # noqa: F401
-from state import (  # noqa: F401
-    BASE,
-    DONE_LINGER,
-    RUNNING_LINGER,
-    STALE_AFTER,
-    WAITING_LINGER,
-    WORKING_LINGER,
-)
-from textlayout import (  # noqa: F401
-    cap_lines,
-    draw_markdown,
-    layout_markdown,
-    line_height,
-    run_colour,
-    run_font,
-    split_to_fit,
-    split_tokens,
-)
-from theme import (  # noqa: F401
-    BLOCK_GAP,
-    BUBBLE_BORDER,
-    BUBBLE_CODE_BG,
-    BUBBLE_CODE_TEXT,
-    BUBBLE_FILL,
-    BUBBLE_LINK,
-    BUBBLE_MAX_TEXT_W,
-    BUBBLE_MUTED,
-    BUBBLE_RULE,
-    BUBBLE_TEXT,
-    FONT_BOLD,
-    FONT_MONO,
-    FONT_REGULAR,
-    INDENT_STEP,
-    IS_MAC,
-    LINE_GAP,
-    MAGENTA_RGB,
-    MAX_BUBBLE_BODY_H,
-    QUOTE_INDENT,
-    RULE_GAP,
-    SS,
-    TRANSPARENT_KEY,
-    hex_to_rgb,
-    load_font,
-)
 
 
 class Widget:
@@ -93,14 +49,12 @@ class Widget:
         self._drag_origin = (0, 0)
         self._dragged = False
         self._bubble_payload = []
-        self._layout_dirty = False
         self._dismissed = {}
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", bool(self.config.get("always_on_top", True)))
         self.canvas = Canvas(self.root)
-        self.img_label = self.canvas.label
 
         self.bubbles = BubbleStack(self.root)
         self.panel = UsagePanel(self.root)
@@ -108,6 +62,7 @@ class Widget:
         self.panel.win.bind("<Button-1>", lambda _e: self.toggle_panel())
 
         self.load_image(self.config.get("image_path", ""))
+        self.build_menu()
         self.bind_events()
         self.position_window()
         # A still image is painted once, so make sure that one paint lands after the
@@ -237,33 +192,60 @@ class Widget:
             self.place_panel()
             self.panel.schedule_refresh(self.refresh_usage)
 
-    def show_menu(self, event):
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="사용량 접기" if self.panel.open else "사용량 펴기", command=self.toggle_panel)
-        if self.panel.open:
-            menu.add_command(label="사용량 새로고침", command=self.refresh_usage)
-        menu.add_separator()
-        menu.add_command(label="이미지 변경...", command=self.change_image)
+    def build_menu(self):
+        """The right-click menu, built once.
 
-        size_menu = tk.Menu(menu, tearoff=0)
-        current = int(self.config.get("max_size", 128))
-        for label, value in SIZE_PRESETS:
-            mark = " ✓" if value == current else ""
-            size_menu.add_command(label=f"{label}{mark}", command=lambda v=value: self.set_max_size(v))
-        menu.add_cascade(label="크기", menu=size_menu)
+        A fresh menu per click was never collected: fifty right-clicks left fifty menu
+        widgets and 750 Tcl commands behind. The entries whose text depends on state
+        are relabelled in show_menu instead.
+        """
+        self.menu = tk.Menu(self.root, tearoff=0)
+        self.menu.add_command(command=self.toggle_panel)
+        self.menu.add_separator()
+        self.menu.add_command(label="이미지 변경...", command=self.change_image)
 
-        label = "항상 위 끄기" if self.config.get("always_on_top", True) else "항상 위 켜기"
-        menu.add_command(label=label, command=self.toggle_topmost)
-        menu.add_command(label="위치 초기화", command=self.reset_position)
-        menu.add_separator()
+        self.size_menu = tk.Menu(self.menu, tearoff=0)
+        for _label, value in SIZE_PRESETS:
+            self.size_menu.add_command(command=lambda v=value: self.set_max_size(v))
+        self.menu.add_cascade(label="크기", menu=self.size_menu)
 
-        off_menu = tk.Menu(menu, tearoff=0)
+        self.menu.add_command(command=self.toggle_topmost)
+        # Recorded rather than written down: this entry sits below the point where the
+        # refresh entry is inserted, so its index shifts by one while that is in place.
+        self._topmost_entry = self.menu.index("end")
+        self.menu.add_command(label="위치 초기화", command=self.reset_position)
+        self.menu.add_separator()
+
+        # Nothing in here depends on state, so it is never touched again.
+        off_menu = tk.Menu(self.menu, tearoff=0)
         off_menu.add_command(label="1시간 끄기", command=lambda: self.pause(3600))
         off_menu.add_command(label="오늘 하루 끄기", command=lambda: self.pause(seconds_until_tomorrow()))
         off_menu.add_command(label="다시 켤 때까지 끄기", command=lambda: self.pause(None))
-        menu.add_cascade(label="끄기", menu=off_menu)
-        menu.add_command(label="이번만 닫기", command=self.quit)
-        menu.tk_popup(event.x_root, event.y_root)
+        self.menu.add_cascade(label="끄기", menu=off_menu)
+        self.menu.add_command(label="이번만 닫기", command=self.quit)
+        self._menu_has_refresh = False
+
+    def show_menu(self, event):
+        # Refreshing is meaningless with the panel closed, so that entry comes and goes
+        # rather than sitting there greyed out. Menu.delete releases the Tcl command it
+        # created, and the panel rarely toggles, so this is not the old per-click churn.
+        if self.panel.open != self._menu_has_refresh:
+            if self.panel.open:
+                self.menu.insert_command(1, label="사용량 새로고침", command=self.refresh_usage)
+            else:
+                self.menu.delete(1)
+            self._menu_has_refresh = self.panel.open
+
+        self.menu.entryconfigure(0, label="사용량 접기" if self.panel.open else "사용량 펴기")
+
+        current = int(self.config.get("max_size", 128))
+        for index, (label, value) in enumerate(SIZE_PRESETS):
+            mark = " ✓" if value == current else ""
+            self.size_menu.entryconfigure(index, label=f"{label}{mark}")
+
+        label = "항상 위 끄기" if self.config.get("always_on_top", True) else "항상 위 켜기"
+        self.menu.entryconfigure(self._topmost_entry + int(self._menu_has_refresh), label=label)
+        self.menu.tk_popup(event.x_root, event.y_root)
 
     def pause(self, seconds):
         """Stop the hooks from bringing the widget back, then close it.
@@ -319,18 +301,15 @@ class Widget:
         # Oldest first so the newest ends up nearest the character.
         entries.sort(key=lambda item: item[2])
         payload = [(folder, text) for folder, text, _ in entries]
-        if payload == getattr(self, "_bubble_payload", None) and not self._layout_dirty:
+        if payload == self._bubble_payload:
             return
         self._bubble_payload = payload
-        self._layout_dirty = False
         self.place_bubbles()
 
     def place_bubbles(self):
         tip_x = self.root.winfo_x() + self.root.winfo_width() - 20
         tip_y = self.root.winfo_y() + 4
-        self.bubbles.update(
-            getattr(self, "_bubble_payload", []), tip_x, tip_y, on_click=self.dismiss_bubble
-        )
+        self.bubbles.update(self._bubble_payload, tip_x, tip_y, on_click=self.dismiss_bubble)
 
     def dismiss_bubble(self, folder):
         self._dismissed[folder] = time.time()

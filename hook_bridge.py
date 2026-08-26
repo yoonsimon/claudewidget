@@ -1,8 +1,11 @@
 """Claude Code hook -> widget state bridge.
 
-Claude Code runs this on every hook event. It records the session state next to
-this file and makes sure the widget process is up, so the widget itself never
-has to talk to Claude Code directly.
+Claude Code runs this on every hook event. It records the session state in the
+per-user state directory and makes sure the widget process is up, so the widget
+itself never has to talk to Claude Code directly.
+
+The paths come from state.py rather than being rebuilt here: the widget reads the
+same files, and a hook writing somewhere else would just stop producing bubbles.
 """
 
 import json
@@ -12,11 +15,10 @@ import time
 from pathlib import Path
 
 import single_instance
+from state import PAUSE_PATH, STATE_DIR, state_path
 
 BASE = Path(__file__).resolve().parent
-STATE_DIR = BASE / "state"
 WIDGET_PATH = BASE / "widget.py"
-PAUSE_PATH = STATE_DIR / "_paused"  # while this exists the hook does nothing at all
 
 MAX_SNIPPET = 260
 MAX_LINES = 8
@@ -44,6 +46,9 @@ def project_from_scratchpad(path):
     Claude Code puts scratchpads under <temp>/claude/<encoded-cwd>/<session>/scratchpad,
     and the encoded name ends with the project directory. Without this the bubble
     would be labelled with a throwaway subfolder that the user has never heard of.
+
+    Returns (name, key). The encoded directory is shared by every session of that
+    project while the session folder below it is not, so it is what identifies it.
     """
     for parent in path.parents:
         name = parent.name
@@ -51,41 +56,37 @@ def project_from_scratchpad(path):
         if parent.parent.name == "claude" and len(name) > 3 and name[1:3] == "--":
             tokens = [token for token in name.rstrip("-").split("-") if token]
             if tokens:
-                return tokens[-1]
-    return ""
+                return tokens[-1], str(parent)
+    return "", ""
 
 
-def project_folder(payload):
-    """Project name for the bubble header.
+def project_identity(payload):
+    """(name for the bubble header, path that identifies the project).
 
     The hook's cwd can point at a subdirectory, so walk up to the nearest project
-    marker instead: working inside me/claude-widget still reads as "me".
+    marker instead: working inside me/claude-widget still reads as "me". The project
+    root doubles as the identity, because two of them can share a display name.
     """
     cwd = payload.get("cwd") or ""
     if not cwd:
-        return ""
+        return "", ""
     try:
         path = Path(cwd).resolve()
         home = Path.home().resolve()
     except Exception:
-        return ""
+        return "", ""
     for candidate in (path, *path.parents):
         # Checked before the markers, not after: ~/.claude exists on every Claude Code
         # machine, so testing home would label any stray folder with the account name.
         if candidate == home:
             break
         if any((candidate / marker).exists() for marker in PROJECT_MARKERS):
-            return candidate.name or str(candidate)
-    return project_from_scratchpad(path) or path.name or str(path)
+            return candidate.name or str(candidate), str(candidate)
+    name, key = project_from_scratchpad(path)
+    return (name, key) if name else (path.name or str(path), str(path))
 
 
-def state_path(folder):
-    """One file per project, so sessions in different folders never overwrite each other."""
-    slug = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in folder) or "_"
-    return STATE_DIR / f"{slug}.json"
-
-
-def save_state(state):
+def save_state(state, key=""):
     """Write the state atomically.
 
     The widget re-reads these files every 500ms, and on Windows that read can
@@ -95,7 +96,7 @@ def save_state(state):
     state["ts"] = time.time()
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        path = state_path(state.get("folder") or "")
+        path = state_path(state.get("folder") or "", key)
         tmp = path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
         for attempt in range(REPLACE_RETRIES):
@@ -241,7 +242,7 @@ def main():
 
     payload = read_payload()
     event = payload.get("hook_event_name", "")
-    folder = project_folder(payload)
+    folder, key = project_identity(payload)
 
     if event in ("PreToolUse", "PostToolUse"):
         # The assistant's own line is already in the transcript by the time a tool
@@ -249,20 +250,20 @@ def main():
         # name. Costs a tail read (single-digit ms).
         text = last_assistant_text(payload.get("transcript_path", ""))
         tool = payload.get("tool_name", "") if event == "PreToolUse" else ""
-        save_state({"state": "running", "tool": tool, "text": text, "folder": folder})
+        save_state({"state": "running", "tool": tool, "text": text, "folder": folder}, key)
     elif event == "Notification":
         # Trimmed like the Stop path: an untrimmed message would be stored in full.
         text = trim_snippet(payload.get("message", "") or "")
-        save_state({"state": "waiting", "tool": "", "text": text, "folder": folder})
+        save_state({"state": "waiting", "tool": "", "text": text, "folder": folder}, key)
     elif event == "Stop":
         text = last_assistant_text(payload.get("transcript_path", ""))
-        save_state({"state": "done", "tool": "", "text": text, "folder": folder})
+        save_state({"state": "done", "tool": "", "text": text, "folder": folder}, key)
     elif event == "SubagentStop":
         # 서브에이전트(워크플로 에이전트 포함)가 하나 끝날 때마다 온다. 메인 응답이 끝난
         # 것은 아니므로 done 이 아니라 running 으로 두고, 몇 개가 끝났는지만 보여준다.
         # 워크플로는 에이전트를 여럿 띄우므로 이 이벤트는 여러 번 발생한다.
         text = last_assistant_text(payload.get("transcript_path", ""))
-        save_state({"state": "running", "tool": "에이전트 완료", "text": text, "folder": folder})
+        save_state({"state": "running", "tool": "에이전트 완료", "text": text, "folder": folder}, key)
     else:
         return
 

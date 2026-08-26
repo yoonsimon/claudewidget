@@ -52,7 +52,7 @@ which python3
 ### 3. 동작 확인 (훅을 건드리기 전에)
 
 ```bash
-<PYTHON> -c "import sys; sys.path.insert(0, r'<WIDGET>'); import widget, usage, markdown, hook_bridge; print('OK')"
+<PYTHON> -c "import sys; sys.path.insert(0, r'<WIDGET>'); import widget, panel, usage, tokens, markdown, hook_bridge; print('OK')"
 ```
 
 `OK` 가 안 나오면 훅 설정으로 넘어가지 말 것. 원인을 먼저 해결한다.
@@ -165,7 +165,11 @@ Start-Process -FilePath "<PYTHONW>" -ArgumentList "<WIDGET>\widget.py"
      ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
    ```
 
-3. 저장소 폴더를 지운다.
+3. 사용자 전용 경로에 남는 상태와 캐시를 지운다. 위젯 폴더 안에는 없다.
+   윈도우는 `%LOCALAPPDATA%\claude-widget\` 하나를 지우면 되고,
+   맥은 `~/.cache/claude-widget/` 와 `~/Library/Caches/claude-widget/` 두 곳이다.
+
+4. 저장소 폴더를 지운다.
 
 ## 맥에서 확인할 것 (실기 검증 전)
 
@@ -188,8 +192,16 @@ Start-Process -FilePath "<PYTHONW>" -ArgumentList "<WIDGET>\widget.py"
 Claude Code 는 스스로 고칠 수 없다. 설정 파일을 읽는 것조차 막히기 때문이다. 사용자가 직접
 `~/.claude/settings.json` 에서 해당 훅 항목을 지우거나, 폴더를 원래 경로로 되돌려야 한다.
 
-**말풍선이 안 뜨는 경우.** `<WIDGET>\state\` 에 프로젝트별 JSON 이 생기는지 확인한다.
-파일이 없으면 훅이 안 불리는 것이고, 파일은 있는데 말풍선이 없으면 위젯 프로세스가 죽은 것이다.
+**말풍선이 안 뜨는 경우.** 상태 파일이 생기는지 확인한다. 위젯 폴더가 아니라
+`%LOCALAPPDATA%\claude-widget\state\` (맥은 `~/.cache/claude-widget/state/`) 안의
+`<폴더명>-<해시8자>.json` 이다. 파일이 없으면 훅이 안 불리는 것이고, 파일은 있는데 말풍선이 없으면
+위젯 프로세스가 죽었거나, 상태 경로가 바뀐 버전으로 올린 뒤 옛 위젯 프로세스가 아직 떠 있는 것이다.
+후자는 위젯을 껐다 켜면 풀린다. 프로세스가 살아 있는 동안에는 훅이 새로 띄우지 않으므로
+저절로 낫지 않는다.
+
+**업그레이드 직후 말풍선이 조용히 끊긴 경우.** 위젯은 시작할 때 읽은 상태 폴더 경로를 그대로 들고
+있다. 그 경로가 바뀌는 업그레이드에서는 돌던 프로세스가 이제 아무것도 없는 폴더를 계속 들여다본다.
+위 제거 절차 2번의 명령으로 위젯만 끝내고 다시 띄운다.
 
 **사용량 패널이 비는 경우.** `<PYTHON> "<WIDGET>\usage.py"` 를 직접 실행해 원인을 본다.
 `no-credentials` 면 Claude Code 로그인이 안 된 것이고, `http-401` 이면 토큰이 만료된 것이다.
