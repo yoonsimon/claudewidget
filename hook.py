@@ -6,14 +6,17 @@ machine, so a missing or half-edited hook_bridge.py must never be fatal. This
 wrapper runs it and swallows anything it throws.
 """
 
-import runpy
+import os
 import sys
-from pathlib import Path
 
-TARGET = Path(__file__).resolve().parent / "hook_bridge.py"
+# Plain import rather than runpy: this runs on every tool call, so the ~10ms runpy
+# costs are worth avoiding. sys.path is set so hook_bridge finds its siblings.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    runpy.run_path(str(TARGET), run_name="__main__")
+    import hook_bridge
+
+    hook_bridge.main()
 except BaseException:
     pass
 

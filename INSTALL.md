@@ -59,7 +59,7 @@ which python3
 
 ### 4. 훅 등록 (가장 조심할 단계)
 
-`~/.claude/settings.json` 의 `hooks` 에 4개 이벤트를 추가한다.
+`~/.claude/settings.json` 의 `hooks` 에 3개 이벤트를 추가한다.
 
 **반드시 지킬 것:**
 
@@ -77,9 +77,6 @@ which python3
 {
   "hooks": {
     "PreToolUse": [
-      { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook.py\"" }] }
-    ],
-    "PostToolUse": [
       { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook.py\"" }] }
     ],
     "Notification": [
@@ -127,7 +124,7 @@ echo "exit code should be 0"
 
 ## 제거
 
-1. `~/.claude/settings.json` 에서 `hook.py` 를 참조하는 훅 항목 4개를 지운다.
+1. `~/.claude/settings.json` 에서 `hook.py` 를 참조하는 훅 항목 3개를 지운다.
 2. 실행 중인 위젯을 종료한다. (우클릭 → 종료, 또는 `taskkill /F /IM pythonw.exe`)
 3. 저장소 폴더를 지운다.
 

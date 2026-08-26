@@ -31,16 +31,13 @@ VS Code 에서 이 저장소를 열고 Claude Code 에게 `INSTALL.md 대로 설
    pip install pillow
    ```
 
-3. `~/.claude/settings.json` 의 `hooks` 에 아래 4개 이벤트를 추가한다.
+3. `~/.claude/settings.json` 의 `hooks` 에 아래 3개 이벤트를 추가한다.
    `<PYTHON>` 은 `where python` 으로 확인한 경로, `<WIDGET>` 은 이 폴더 경로.
 
    ```json
    {
      "hooks": {
        "PreToolUse": [
-         { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook.py\"" }] }
-       ],
-       "PostToolUse": [
          { "matcher": "", "hooks": [{ "type": "command", "command": "\"<PYTHON>\" \"<WIDGET>\\hook.py\"" }] }
        ],
        "Notification": [
@@ -79,7 +76,7 @@ VS Code 에서 이 저장소를 열고 Claude Code 에게 `INSTALL.md 대로 설
 
 | 상태 | 표시 | 언제 |
 |---|---|---|
-| 도구 실행 중 | `실행중: Bash` | Claude 가 파일을 읽거나 명령을 실행할 때 |
+| 도구 실행 중 | Claude 가 방금 한 말 + `Bash` 실행중 | 도구를 실행할 때 |
 | 입력 대기 | 알림 문구 | 권한 승인이나 입력을 기다릴 때 |
 | 응답 완료 | 마지막 응답 요약 | 답변이 끝났을 때 (8초간 표시) |
 

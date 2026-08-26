@@ -7,7 +7,6 @@ has to talk to Claude Code directly.
 
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -171,6 +170,8 @@ def ensure_widget_running():
     if single_instance.is_running():
         return
 
+    import subprocess  # deferred: only needed on the rare call that actually spawns
+
     # The widget must outlive this hook process, and the detach flags for that are
     # named differently on each platform.
     options = {}
@@ -199,10 +200,13 @@ def main():
     event = payload.get("hook_event_name", "")
     folder = project_folder(payload)
 
-    if event == "PreToolUse":
-        save_state({"state": "running", "tool": payload.get("tool_name", ""), "text": "", "folder": folder})
-    elif event == "PostToolUse":
-        save_state({"state": "running", "tool": "", "text": "", "folder": folder})
+    if event in ("PreToolUse", "PostToolUse"):
+        # The assistant's own line is already in the transcript by the time a tool
+        # runs, so the bubble can show what Claude just said instead of a bare tool
+        # name. Costs a tail read (single-digit ms).
+        text = last_assistant_text(payload.get("transcript_path", ""))
+        tool = payload.get("tool_name", "") if event == "PreToolUse" else ""
+        save_state({"state": "running", "tool": tool, "text": text, "folder": folder})
     elif event == "Notification":
         # Trimmed like the Stop path: an untrimmed message would be stored in full.
         text = trim_snippet(payload.get("message", "") or "")

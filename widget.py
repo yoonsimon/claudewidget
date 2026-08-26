@@ -43,6 +43,7 @@ RUNNING_LINGER = 90  # "실행중: <tool>"
 WORKING_LINGER = 180  # "작업중..." between tools, where Claude may be thinking
 WAITING_LINGER = 10 * 60  # a real permission prompt can wait a long time
 STALE_AFTER = 30 * 60  # after this the state file itself is deleted
+POLL_MS = 250  # how soon a state change reaches the screen
 
 SIZE_PRESETS = [("작게", 96), ("보통", 128), ("크게", 180), ("아주 크게", 240)]
 
@@ -113,9 +114,12 @@ def bubble_text(state):
 
     if kind == "running":
         tool = state.get("tool") or ""
-        if tool:
-            return f"실행중: {tool}" if age <= RUNNING_LINGER else ""
-        return "작업중..." if age <= WORKING_LINGER else ""
+        if age > (RUNNING_LINGER if tool else WORKING_LINGER):
+            return ""
+        if text:
+            # What Claude just said, with the running tool as a trailing code line.
+            return f"{text}\n\n`{tool}` 실행중" if tool else text
+        return f"실행중: {tool}" if tool else "작업중..."
     if kind == "waiting":
         return (text or "입력을 기다리고 있어요") if age <= WAITING_LINGER else ""
     if kind == "done" and text:
@@ -856,7 +860,7 @@ class Widget:
 
     def poll_state(self):
         self.refresh_bubbles()
-        self.root.after(500, self.poll_state)
+        self.root.after(POLL_MS, self.poll_state)
 
     def refresh_bubbles(self):
         entries = []
