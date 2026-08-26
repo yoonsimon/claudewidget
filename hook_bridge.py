@@ -37,6 +37,23 @@ def gui_executable():
 PROJECT_MARKERS = (".git", ".claude", "CLAUDE.md")
 
 
+def project_from_scratchpad(path):
+    """Recover the real project when a session is working inside its scratchpad.
+
+    Claude Code puts scratchpads under <temp>/claude/<encoded-cwd>/<session>/scratchpad,
+    and the encoded name ends with the project directory. Without this the bubble
+    would be labelled with a throwaway subfolder that the user has never heard of.
+    """
+    for parent in path.parents:
+        name = parent.name
+        # The encoded cwd starts with a drive letter followed by two dashes ("c--...").
+        if parent.parent.name == "claude" and len(name) > 3 and name[1:3] == "--":
+            tokens = [token for token in name.rstrip("-").split("-") if token]
+            if tokens:
+                return tokens[-1]
+    return ""
+
+
 def project_folder(payload):
     """Project name for the bubble header.
 
@@ -58,7 +75,7 @@ def project_folder(payload):
             break
         if any((candidate / marker).exists() for marker in PROJECT_MARKERS):
             return candidate.name or str(candidate)
-    return path.name or str(path)
+    return project_from_scratchpad(path) or path.name or str(path)
 
 
 def state_path(folder):
