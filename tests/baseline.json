@@ -1,0 +1,205 @@
+{
+  "bubble.plain.tail": {
+    "size": [
+      137,
+      69
+    ],
+    "sha": "a59a6398b465d88a"
+  },
+  "bubble.plain.plain": {
+    "size": [
+      137,
+      58
+    ],
+    "sha": "d56f4f36e1b06f02"
+  },
+  "bubble.two_lines.tail": {
+    "size": [
+      120,
+      93
+    ],
+    "sha": "465e4d2283a436ca"
+  },
+  "bubble.two_lines.plain": {
+    "size": [
+      120,
+      82
+    ],
+    "sha": "6c621c9bf0f83193"
+  },
+  "bubble.long_korean.tail": {
+    "size": [
+      322,
+      189
+    ],
+    "sha": "4e596f6799162f1d"
+  },
+  "bubble.long_korean.plain": {
+    "size": [
+      322,
+      178
+    ],
+    "sha": "1f8e7e695a8281e6"
+  },
+  "bubble.markdown_mix.tail": {
+    "size": [
+      167,
+      149
+    ],
+    "sha": "401ecda0bbd0c3a1"
+  },
+  "bubble.markdown_mix.plain": {
+    "size": [
+      167,
+      138
+    ],
+    "sha": "db7f0fcf9e0fbdea"
+  },
+  "bubble.headings.tail": {
+    "size": [
+      103,
+      195
+    ],
+    "sha": "2bb0a0d855c00e4f"
+  },
+  "bubble.headings.plain": {
+    "size": [
+      103,
+      184
+    ],
+    "sha": "81b5db379e248db5"
+  },
+  "bubble.code_block.tail": {
+    "size": [
+      114,
+      144
+    ],
+    "sha": "c92e55f801de8b75"
+  },
+  "bubble.code_block.plain": {
+    "size": [
+      114,
+      133
+    ],
+    "sha": "0853d2883cf0ebfd"
+  },
+  "bubble.long_token.tail": {
+    "size": [
+      326,
+      189
+    ],
+    "sha": "b0dca611e6048856"
+  },
+  "bubble.long_token.plain": {
+    "size": [
+      326,
+      178
+    ],
+    "sha": "df726c82d9688798"
+  },
+  "bubble.url.tail": {
+    "size": [
+      328,
+      165
+    ],
+    "sha": "ba32bd4e3a28ef39"
+  },
+  "bubble.url.plain": {
+    "size": [
+      328,
+      154
+    ],
+    "sha": "91d04dc8e1ef0c11"
+  },
+  "bubble.quote_rule.tail": {
+    "size": [
+      217,
+      121
+    ],
+    "sha": "5d20efa1dc5fb3f5"
+  },
+  "bubble.quote_rule.plain": {
+    "size": [
+      217,
+      110
+    ],
+    "sha": "77a355376414494a"
+  },
+  "bubble.blank_heavy.tail": {
+    "size": [
+      69,
+      189
+    ],
+    "sha": "daef57fb8406b567"
+  },
+  "bubble.blank_heavy.plain": {
+    "size": [
+      69,
+      178
+    ],
+    "sha": "a98a23ea9f6b4e6e"
+  },
+  "bubble.no_folder.tail": {
+    "size": [
+      167,
+      52
+    ],
+    "sha": "d572c529eb619e15"
+  },
+  "bubble.no_folder.plain": {
+    "size": [
+      167,
+      41
+    ],
+    "sha": "99ec04840ba31338"
+  },
+  "panel.loading": {
+    "size": [
+      232,
+      78
+    ],
+    "sha": "97f298a396c70637"
+  },
+  "panel.error": {
+    "size": [
+      232,
+      78
+    ],
+    "sha": "cdd1c5867658d321"
+  },
+  "panel.rows": {
+    "size": [
+      232,
+      222
+    ],
+    "sha": "8574c46e0ac6228d"
+  },
+  "character.96": {
+    "size": [
+      96,
+      96
+    ],
+    "sha": "38946e1bdf7d608e"
+  },
+  "character.128": {
+    "size": [
+      128,
+      128
+    ],
+    "sha": "df5a215f55c09645"
+  },
+  "character.180": {
+    "size": [
+      180,
+      180
+    ],
+    "sha": "704532e3c269d53a"
+  },
+  "character.240": {
+    "size": [
+      240,
+      240
+    ],
+    "sha": "9a725bb8426f4e03"
+  }
+}

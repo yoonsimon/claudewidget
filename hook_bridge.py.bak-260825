@@ -257,12 +257,6 @@ def main():
     elif event == "Stop":
         text = last_assistant_text(payload.get("transcript_path", ""))
         save_state({"state": "done", "tool": "", "text": text, "folder": folder})
-    elif event == "SubagentStop":
-        # 서브에이전트(워크플로 에이전트 포함)가 하나 끝날 때마다 온다. 메인 응답이 끝난
-        # 것은 아니므로 done 이 아니라 running 으로 두고, 몇 개가 끝났는지만 보여준다.
-        # 워크플로는 에이전트를 여럿 띄우므로 이 이벤트는 여러 번 발생한다.
-        text = last_assistant_text(payload.get("transcript_path", ""))
-        save_state({"state": "running", "tool": "에이전트 완료", "text": text, "folder": folder})
     else:
         return
 
