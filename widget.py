@@ -31,7 +31,7 @@ from state import (
     save_json,
     seconds_until_tomorrow,
 )
-from theme import SIZE_PRESETS
+from theme import OPACITY_PRESETS, SIZE_PRESETS
 
 # The widget itself never draws a bubble directly, only through BubbleStack. This
 # import is what makes `widget.SpeechBubble` resolve for tests/render_snapshot.py,
@@ -75,23 +75,24 @@ class Widget:
 
     def load_image(self, path):
         max_size = int(self.config.get("max_size", 128) or 128)
+        opacity = float(self.config.get("opacity", 1.0) or 1.0)
         # Configured image first, bundled default next, drawn placeholder as last resort.
         for candidate in (path, DEFAULT_IMAGE):
-            if candidate and Path(candidate).exists() and self.load_frames(candidate, max_size):
+            if candidate and Path(candidate).exists() and self.load_frames(candidate, max_size, opacity):
                 break
         else:
-            f = prepare_frame(placeholder_image(max_size), max_size)
+            f = prepare_frame(placeholder_image(max_size), max_size, opacity)
             self.frames = [(f, 1000)]
             self.img_size = f.size
         self.frame_index = 0
 
-    def load_frames(self, path, max_size):
+    def load_frames(self, path, max_size, opacity):
         self.frames = []
         try:
             im = Image.open(path)
             iterator = ImageSequence.Iterator(im) if getattr(im, "is_animated", False) else [im]
             for frame in iterator:
-                f = prepare_frame(frame, max_size)
+                f = prepare_frame(frame, max_size, opacity)
                 duration = frame.info.get("duration", 120) or 120
                 self.frames.append((f, duration))
                 self.img_size = f.size
@@ -219,6 +220,11 @@ class Widget:
             self.size_menu.add_command(command=lambda v=value: self.set_max_size(v))
         self.menu.add_cascade(label="크기", menu=self.size_menu)
 
+        self.opacity_menu = tk.Menu(self.menu, tearoff=0)
+        for _label, value in OPACITY_PRESETS:
+            self.opacity_menu.add_command(command=lambda v=value: self.set_opacity(v))
+        self.menu.add_cascade(label="투명도", menu=self.opacity_menu)
+
         self.menu.add_command(command=self.toggle_topmost)
         # Recorded rather than written down: this entry sits below the point where the
         # refresh entry is inserted, so its index shifts by one while that is in place.
@@ -252,6 +258,11 @@ class Widget:
         for index, (label, value) in enumerate(SIZE_PRESETS):
             mark = " ✓" if value == current else ""
             self.size_menu.entryconfigure(index, label=f"{label}{mark}")
+
+        current_op = float(self.config.get("opacity", 1.0) or 1.0)
+        for index, (label, value) in enumerate(OPACITY_PRESETS):
+            mark = " ✓" if abs(value - current_op) < 0.01 else ""
+            self.opacity_menu.entryconfigure(index, label=f"{label}{mark}")
 
         label = "항상 위 끄기" if self.config.get("always_on_top", True) else "항상 위 켜기"
         self.menu.entryconfigure(self._topmost_entry + int(self._menu_has_refresh), label=label)
@@ -288,6 +299,12 @@ class Widget:
         self.load_image(self.config.get("image_path", ""))
         self.position_window()
         self.place_bubbles()
+
+    def set_opacity(self, value):
+        self.config["opacity"] = value
+        save_json(CONFIG_PATH, self.config)
+        self.load_image(self.config.get("image_path", ""))
+        self.paint_character()
 
     def toggle_topmost(self):
         self.config["always_on_top"] = not self.config.get("always_on_top", True)

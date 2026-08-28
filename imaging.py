@@ -118,19 +118,31 @@ def bleed_rgb(im):
     return rgb
 
 
-def prepare_frame(frame, max_size):
-    """Fit a frame into the box, ready for the platform's transparency scheme."""
+def _apply_opacity(alpha, opacity):
+    """Scale a whole alpha channel toward transparent. opacity is 0.0-1.0."""
+    if opacity >= 1.0:
+        return alpha
+    factor = max(0.0, min(1.0, opacity))
+    return alpha.point(lambda v: int(v * factor))
+
+
+def prepare_frame(frame, max_size, opacity=1.0):
+    """Fit a frame into the box, ready for the platform's transparency scheme.
+
+    opacity < 1 fades the whole character so it sits lighter over other windows.
+    """
     im = frame.convert("RGBA")
     ratio = min(max_size / im.width, max_size / im.height, 1.0)
     size = (max(1, round(im.width * ratio)), max(1, round(im.height * ratio)))
 
     if IS_MAC:
-        return im.resize(size, Image.LANCZOS)
+        out = im.resize(size, Image.LANCZOS)
+        return Image.merge("RGBA", (*out.split()[:3], _apply_opacity(out.getchannel("A"), opacity)))
 
     # Bleeding the colour outward first stops the resize from dragging the black
     # that straight-alpha PNGs keep in their transparent pixels into the rim.
     rgb = bleed_rgb(im).resize(size, Image.LANCZOS)
-    alpha = im.getchannel("A").resize(size, Image.LANCZOS)
+    alpha = _apply_opacity(im.getchannel("A").resize(size, Image.LANCZOS), opacity)
     out = Image.merge("RGBA", (*rgb.split(), alpha))
     return out
 

@@ -6,6 +6,7 @@ from functools import lru_cache
 from PIL import ImageFont
 
 SIZE_PRESETS = [("작게", 96), ("보통", 128), ("크게", 180), ("아주 크게", 240)]
+OPACITY_PRESETS = [("100%", 1.0), ("75%", 0.75), ("50%", 0.5), ("25%", 0.25)]
 
 IS_MAC = sys.platform == "darwin"
 

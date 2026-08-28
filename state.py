@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "x": None,
     "y": None,
     "max_size": 128,
+    "opacity": 1.0,
     "always_on_top": True,
 }
 
